@@ -12,30 +12,38 @@ import (
 func GetClient() (*client.Client, error) {
 	// Check for API URL override in environment
 	apiURL := os.Getenv("WRALE_API_URL")
-	if apiURL == "" {
-		// Load from config if not in environment
-		cfg, err := config.Load()
-		if err != nil {
-			return nil, fmt.Errorf("failed to load config: %w", err)
-		}
-		if cfg.Server == "" {
-			return nil, fmt.Errorf("no API server configured - set WRALE_API_URL or configure in wsignctl config")
-		}
-		apiURL = cfg.Server
-	}
+	var token string
 
-	// Check for auth token in environment
-	token := os.Getenv("WRALE_AUTH_TOKEN")
-	if token == "" {
-		// Load from config if not in environment
-		cfg, err := config.Load()
+	if apiURL == "" || os.Getenv("WRALE_AUTH_TOKEN") == "" {
+		// Load configuration if either URL or token not in environment
+		cfg, err := config.LoadConfig()
 		if err != nil {
 			return nil, fmt.Errorf("failed to load config: %w", err)
 		}
-		if cfg.Token == "" {
-			return nil, fmt.Errorf("no auth token configured - set WRALE_AUTH_TOKEN or authenticate using 'wsignctl login'")
+
+		// Get current context
+		ctx, err := cfg.GetCurrentContext()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get current context: %w", err)
 		}
-		token = cfg.Token
+
+		// Use context values if environment variables not set
+		if apiURL == "" {
+			if ctx.Server == "" {
+				return nil, fmt.Errorf("no API server configured - set WRALE_API_URL or configure server in wsignctl config")
+			}
+			apiURL = ctx.Server
+		}
+
+		if os.Getenv("WRALE_AUTH_TOKEN") == "" {
+			if ctx.Token == "" {
+				return nil, fmt.Errorf("no auth token configured - set WRALE_AUTH_TOKEN or authenticate using 'wsignctl login'")
+			}
+			token = ctx.Token
+		}
+	} else {
+		// Use environment token if set
+		token = os.Getenv("WRALE_AUTH_TOKEN")
 	}
 
 	// Create client with loaded configuration
