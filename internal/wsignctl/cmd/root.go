@@ -40,7 +40,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.wsignctl.yaml)")
 	rootCmd.PersistentFlags().String("server", "", "API server address")
 	rootCmd.PersistentFlags().String("token", "", "Authentication token")
-	
+
 	// Add commands
 	rootCmd.AddCommand(newDisplayCmd())
 	rootCmd.AddCommand(newContentCmd())

@@ -88,9 +88,9 @@ When given a context name, it shows detailed information about that specific con
 // and TLS settings.
 func newConfigSetContextCmd() *cobra.Command {
 	var (
-		server            string
-		token            string
-		insecureSkipTLS  bool
+		server          string
+		token           string
+		insecureSkipTLS bool
 	)
 
 	cmd := &cobra.Command{
@@ -121,9 +121,9 @@ A context includes:
 
 			// Create or update context
 			context := &config.Context{
-				Name:              name,
-				Server:            server,
-				Token:            token,
+				Name:               name,
+				Server:             server,
+				Token:              token,
 				InsecureSkipVerify: insecureSkipTLS,
 			}
 

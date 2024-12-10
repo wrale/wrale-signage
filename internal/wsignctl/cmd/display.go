@@ -36,10 +36,10 @@ codes, managing display locations, and viewing display status information.`,
 // newDisplayCreateCmd creates a command for pre-configuring displays
 func newDisplayCreateCmd() *cobra.Command {
 	var (
-		siteID    string
-		zone      string
-		position  string
-		labels    []string
+		siteID   string
+		zone     string
+		position string
+		labels   []string
 	)
 
 	cmd := &cobra.Command{
@@ -110,10 +110,10 @@ the display, like "lobby-north" or "cafeteria-menu-1".`,
 // newDisplayActivateCmd creates a command for activating displays showing setup codes
 func newDisplayActivateCmd() *cobra.Command {
 	var (
-		siteID    string
-		zone      string
-		position  string
-		labels    []string
+		siteID   string
+		zone     string
+		position string
+		labels   []string
 	)
 
 	cmd := &cobra.Command{
@@ -185,11 +185,11 @@ connected to the displays.{domain} endpoint.`,
 // newDisplayListCmd creates a command for listing and filtering displays
 func newDisplayListCmd() *cobra.Command {
 	var (
-		siteID    string
-		zone      string
-		position  string
-		output    string
-		showLast  bool
+		siteID   string
+		zone     string
+		position string
+		output   string
+		showLast bool
 	)
 
 	cmd := &cobra.Command{
@@ -286,9 +286,9 @@ Use --show-last to include the last content URL each display loaded.`,
 // newDisplayUpdateCmd creates a command for updating display configuration
 func newDisplayUpdateCmd() *cobra.Command {
 	var (
-		siteID    string
-		zone      string
-		position  string
+		siteID       string
+		zone         string
+		position     string
 		addLabels    []string
 		removeLabels []string
 	)
