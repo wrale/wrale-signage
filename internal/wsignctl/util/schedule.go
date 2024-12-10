@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
 	"github.com/wrale/wrale-signage/api/types/v1alpha1"
 )
 
