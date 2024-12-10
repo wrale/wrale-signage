@@ -84,8 +84,13 @@ A content source needs:
 	cmd.Flags().StringVar(&contentType, "type", "", "Type of content (required)")
 	cmd.Flags().StringArrayVar(&properties, "property", nil, "Additional properties in Key=Value format")
 
-	cmd.MarkFlagRequired("url")
-	cmd.MarkFlagRequired("type")
+	if err := cmd.MarkFlagRequired("url"); err != nil {
+		// This should only happen during development
+		panic(fmt.Sprintf("failed to mark 'url' flag as required: %v", err))
+	}
+	if err := cmd.MarkFlagRequired("type"); err != nil {
+		panic(fmt.Sprintf("failed to mark 'type' flag as required: %v", err))
+	}
 
 	return cmd
 }

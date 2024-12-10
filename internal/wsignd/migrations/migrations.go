@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"embed"
 	"fmt"
+	"log"
 	"sort"
 	"time"
 )
@@ -141,7 +142,12 @@ func (m *Manager) applyMigration(ctx context.Context, migration Migration) error
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+
+	defer func() {
+		if err := tx.Rollback(); err != nil && err != sql.ErrTxDone {
+			log.Printf("Error rolling back migration transaction: %v", err)
+		}
+	}()
 
 	// Apply the migration
 	if _, err := tx.ExecContext(ctx, migration.Up); err != nil {
