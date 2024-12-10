@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+	"github.com/wrale/wrale-signage/api/types/v1alpha1"
 	"github.com/wrale/wrale-signage/internal/wsignctl/util"
 )
 
@@ -33,7 +34,7 @@ is the order they will be checked when a display requests content.`,
   # Filter rules by location
   wsignctl rule list --site-id=hq --zone=lobby`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, err := util.GetClient(cmd)
+			client, err := util.GetClientFromCommand(cmd)
 			if err != nil {
 				return err
 			}
@@ -45,7 +46,7 @@ is the order they will be checked when a display requests content.`,
 				Position: opts.position,
 			}
 
-			rules, err := client.ListRedirectRules(cmd.Context(), filter)
+			rules, err := client.ListRedirectRules(cmd.Context())
 			if err != nil {
 				return fmt.Errorf("error listing rules: %w", err)
 			}
