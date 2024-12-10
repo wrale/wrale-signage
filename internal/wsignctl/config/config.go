@@ -83,13 +83,9 @@ func LoadConfig() (*Config, error) {
 
 // SaveConfig writes the configuration to disk
 func SaveConfig(config *Config) error {
-	// Update viper with new config
-	if err := viper.Set("current-context", config.CurrentContext); err != nil {
-		return fmt.Errorf("error setting current-context: %w", err)
-	}
-	if err := viper.Set("contexts", config.Contexts); err != nil {
-		return fmt.Errorf("error setting contexts: %w", err)
-	}
+	// Update viper with new config values
+	viper.Set("current-context", config.CurrentContext)
+	viper.Set("contexts", config.Contexts)
 
 	// Write to disk
 	if err := viper.WriteConfig(); err != nil {
