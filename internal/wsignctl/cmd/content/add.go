@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/wrale/wrale-signage/api/types/v1alpha1"
-	"github.com/wrale/wrale-signage/internal/wsignctl/client"
+	"github.com/wrale/wrale-signage/internal/wsignctl/util"
 )
 
 func newAddCmd() *cobra.Command {
@@ -65,9 +65,9 @@ A content source needs:
 				},
 			}
 
-			c, err := client.GetClient()
+			c, err := util.GetClient()
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to create API client: %w", err)
 			}
 
 			if err := c.AddContentSource(cmd.Context(), source); err != nil {

@@ -10,18 +10,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"path"
-	"sync"
 	"time"
 
 	"github.com/wrale/wrale-signage/api/types/v1alpha1"
-)
-
-var (
-	// singleton is the global client instance
-	singleton *Client
-	// singletonMu protects singleton access
-	singletonMu sync.RWMutex
 )
 
 // Client provides methods for interacting with the Wrale Signage API
@@ -82,25 +73,6 @@ func NewClient(baseURL string, options ...ClientOption) (*Client, error) {
 	}
 
 	return c, nil
-}
-
-// GetClient returns the singleton client instance
-func GetClient() *Client {
-	singletonMu.RLock()
-	if singleton != nil {
-		defer singletonMu.RUnlock()
-		return singleton
-	}
-	singletonMu.RUnlock()
-
-	return nil
-}
-
-// SetClient sets the singleton client instance
-func SetClient(c *Client) {
-	singletonMu.Lock()
-	singleton = c
-	singletonMu.Unlock()
 }
 
 // doRequest performs an HTTP request with automatic error handling

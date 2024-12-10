@@ -4,6 +4,7 @@ package display
 import (
 	"github.com/spf13/cobra"
 	"github.com/wrale/wrale-signage/internal/wsignctl/client"
+	"github.com/wrale/wrale-signage/internal/wsignctl/util"
 )
 
 // NewCommand creates the display management command and its subcommands
@@ -30,7 +31,6 @@ codes, managing display locations, and viewing display status information.`,
 }
 
 // getClient returns a configured API client
-// TODO: Move to shared client configuration package
 func getClient() (*client.Client, error) {
-	return client.New("http://localhost:8080"), nil
+	return util.GetClient()
 }
