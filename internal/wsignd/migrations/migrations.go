@@ -85,7 +85,7 @@ func (m *Manager) ApplyMigrations(ctx context.Context) error {
 	for _, migration := range migrations {
 		if _, ok := applied[migration.Version]; !ok {
 			if err := m.applyMigration(ctx, migration); err != nil {
-				return fmt.Errorf("error applying migration %d: %w", 
+				return fmt.Errorf("error applying migration %d: %w",
 					migration.Version, err)
 			}
 		}

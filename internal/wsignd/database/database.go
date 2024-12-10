@@ -155,7 +155,7 @@ func GenerateUpdateQuery(table string, columns []string, whereColumns []string) 
 func ExecuteNamedQuery(ctx context.Context, tx *Tx, query string, params map[string]interface{}) (sql.Result, error) {
 	// Replace named parameters with positional ones
 	query, args := convertNamedParams(query, params)
-	
+
 	return tx.ExecContext(ctx, query, args...)
 }
 

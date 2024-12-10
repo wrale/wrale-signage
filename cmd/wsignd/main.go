@@ -48,7 +48,7 @@ func main() {
 
 	// Start the server in a goroutine to allow for graceful shutdown
 	go func() {
-		logger.Info("starting server", 
+		logger.Info("starting server",
 			"host", cfg.Server.Host,
 			"port", cfg.Server.Port,
 		)

@@ -10,19 +10,19 @@ import (
 var (
 	// ErrNotFound indicates a requested resource doesn't exist
 	ErrNotFound = errors.New("resource not found")
-	
+
 	// ErrConflict indicates a resource already exists
 	ErrConflict = errors.New("resource already exists")
-	
+
 	// ErrInvalidInput indicates invalid input parameters
 	ErrInvalidInput = errors.New("invalid input")
-	
+
 	// ErrUnauthorized indicates missing or invalid authentication
 	ErrUnauthorized = errors.New("unauthorized")
-	
+
 	// ErrForbidden indicates the authenticated user lacks permission
 	ErrForbidden = errors.New("forbidden")
-	
+
 	// ErrVersionMismatch indicates optimistic concurrency failure
 	ErrVersionMismatch = errors.New("version mismatch")
 )

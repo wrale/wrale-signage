@@ -10,16 +10,16 @@ import (
 type Repository interface {
 	// Save persists a display to storage
 	Save(ctx context.Context, display *Display) error
-	
+
 	// FindByID retrieves a display by its unique identifier
 	FindByID(ctx context.Context, id uuid.UUID) (*Display, error)
-	
+
 	// FindByName retrieves a display by its name
 	FindByName(ctx context.Context, name string) (*Display, error)
-	
+
 	// List retrieves displays matching the given filter
 	List(ctx context.Context, filter DisplayFilter) ([]*Display, error)
-	
+
 	// Delete removes a display from storage
 	Delete(ctx context.Context, id uuid.UUID) error
 }
@@ -38,25 +38,25 @@ type DisplayFilter struct {
 type Service interface {
 	// Register creates a new display
 	Register(ctx context.Context, name string, location Location) (*Display, error)
-	
+
 	// Get retrieves a display by ID
 	Get(ctx context.Context, id uuid.UUID) (*Display, error)
-	
+
 	// List retrieves displays matching the filter
 	List(ctx context.Context, filter DisplayFilter) ([]*Display, error)
-	
+
 	// UpdateLocation updates a display's physical location
 	UpdateLocation(ctx context.Context, id uuid.UUID, location Location) error
-	
+
 	// Activate transitions a display to the active state
 	Activate(ctx context.Context, id uuid.UUID) error
-	
+
 	// Disable transitions a display to the disabled state
 	Disable(ctx context.Context, id uuid.UUID) error
-	
+
 	// UpdateLastSeen updates the display's last seen timestamp
 	UpdateLastSeen(ctx context.Context, id uuid.UUID) error
-	
+
 	// SetProperty sets a display property
 	SetProperty(ctx context.Context, id uuid.UUID, key, value string) error
 }

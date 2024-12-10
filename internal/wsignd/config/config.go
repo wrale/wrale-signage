@@ -84,7 +84,7 @@ type ContentConfig struct {
 // Load creates a new Config from environment variables
 func Load() (*Config, error) {
 	cfg := &Config{}
-	
+
 	// Load server config
 	cfg.Server = ServerConfig{
 		Host:         getEnv("WSIGN_SERVER_HOST", "0.0.0.0"),
@@ -95,7 +95,7 @@ func Load() (*Config, error) {
 		TLSCert:      getEnv("WSIGN_TLS_CERT", ""),
 		TLSKey:       getEnv("WSIGN_TLS_KEY", ""),
 	}
-	
+
 	// Load database config
 	cfg.Database = DatabaseConfig{
 		Host:            getEnv("WSIGN_DB_HOST", "localhost"),
@@ -108,21 +108,21 @@ func Load() (*Config, error) {
 		MaxIdleConns:    getEnvAsInt("WSIGN_DB_MAX_IDLE_CONNS", 25),
 		ConnMaxLifetime: getEnvAsDuration("WSIGN_DB_CONN_MAX_LIFETIME", 5*time.Minute),
 	}
-	
+
 	// Load auth config
 	cfg.Auth = AuthConfig{
-		TokenSigningKey:   getEnvRequired("WSIGN_AUTH_TOKEN_KEY"),
+		TokenSigningKey:  getEnvRequired("WSIGN_AUTH_TOKEN_KEY"),
 		TokenExpiry:      getEnvAsDuration("WSIGN_AUTH_TOKEN_EXPIRY", 1*time.Hour),
 		DeviceCodeExpiry: getEnvAsDuration("WSIGN_AUTH_DEVICE_CODE_EXPIRY", 15*time.Minute),
 	}
-	
+
 	// Load content config
 	cfg.Content = ContentConfig{
 		StoragePath:  getEnv("WSIGN_CONTENT_PATH", "/var/lib/wrale-signage/content"),
 		MaxCacheSize: getEnvAsInt64("WSIGN_CONTENT_CACHE_SIZE", 1024*1024*1024), // 1GB
 		DefaultTTL:   getEnvAsDuration("WSIGN_CONTENT_TTL", 1*time.Hour),
 	}
-	
+
 	return cfg, cfg.validate()
 }
 
@@ -132,12 +132,12 @@ func (c *Config) validate() error {
 	if c.Server.Port < 1 || c.Server.Port > 65535 {
 		return fmt.Errorf("invalid server port: %d", c.Server.Port)
 	}
-	
+
 	// If TLS is configured, both cert and key must be provided
 	if (c.Server.TLSCert != "") != (c.Server.TLSKey != "") {
 		return fmt.Errorf("both TLS cert and key must be provided")
 	}
-	
+
 	// Validate database config
 	if c.Database.Port < 1 || c.Database.Port > 65535 {
 		return fmt.Errorf("invalid database port: %d", c.Database.Port)
@@ -148,7 +148,7 @@ func (c *Config) validate() error {
 	if c.Database.MaxIdleConns < 1 {
 		return fmt.Errorf("invalid max idle connections: %d", c.Database.MaxIdleConns)
 	}
-	
+
 	// Validate auth config
 	if c.Auth.TokenSigningKey == "" {
 		return fmt.Errorf("token signing key is required")
@@ -156,12 +156,12 @@ func (c *Config) validate() error {
 	if c.Auth.TokenExpiry < 1*time.Minute {
 		return fmt.Errorf("token expiry must be at least 1 minute")
 	}
-	
+
 	// Validate content config
 	if c.Content.MaxCacheSize < 1024*1024 { // 1MB minimum
 		return fmt.Errorf("cache size must be at least 1MB")
 	}
-	
+
 	return nil
 }
 

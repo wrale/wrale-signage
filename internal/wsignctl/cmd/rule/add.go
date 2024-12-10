@@ -116,7 +116,7 @@ Rules are evaluated in priority order until a matching rule is found.`,
 	f.StringVar(&opts.contentType, "content-type", "", "Content type to redirect to (required)")
 	f.StringVar(&opts.version, "version", "", "Content version (required)")
 	f.StringVar(&opts.hash, "hash", "", "Content hash (required)")
-	
+
 	// Add schedule flags
 	f.StringVar(&opts.startTime, "start", "", "Rule start time (RFC3339)")
 	f.StringVar(&opts.endTime, "end", "", "Rule end time (RFC3339)")
