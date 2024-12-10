@@ -86,7 +86,7 @@ func (r *Repository) Save(ctx context.Context, d *display.Display) error {
 				return err
 			}
 			if rows == 0 {
-				return display.ErrVersionMismatch
+				return display.ErrVersionMismatch{ID: d.ID.String()}
 			}
 
 			// Update the version number on successful update

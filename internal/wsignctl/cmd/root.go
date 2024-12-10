@@ -7,6 +7,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/wrale/wrale-signage/internal/wsignctl/cmd/content"
+	"github.com/wrale/wrale-signage/internal/wsignctl/cmd/display"
+	"github.com/wrale/wrale-signage/internal/wsignctl/cmd/rule"
 	"github.com/wrale/wrale-signage/internal/wsignctl/config"
 )
 
@@ -40,28 +43,43 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.wsignctl.yaml)")
 	rootCmd.PersistentFlags().String("server", "", "API server address")
 	rootCmd.PersistentFlags().String("token", "", "Authentication token")
+	rootCmd.PersistentFlags().String("context", "", "Configuration context to use")
 
 	// Add commands
-	rootCmd.AddCommand(newDisplayCmd())
-	rootCmd.AddCommand(newContentCmd())
+	rootCmd.AddCommand(display.NewCommand())
+	rootCmd.AddCommand(content.NewCommand())
+	rootCmd.AddCommand(rule.NewCommand())
 	rootCmd.AddCommand(newVersionCmd())
-	rootCmd.AddCommand(newRuleCmd())
 }
 
 // initConfig reads in config file and ENV variables if set
 func initConfig() {
 	var err error
-	cfg, err = config.Load(cfgFile)
+	cfg, err = config.LoadConfig()
 	if err != nil {
 		fmt.Println("Error loading config:", err)
 		os.Exit(1)
 	}
 
-	// Allow command line flags to override config file
+	// Handle command line context override
+	if contextName, _ := rootCmd.PersistentFlags().GetString("context"); contextName != "" {
+		if err := cfg.SetCurrentContext(contextName); err != nil {
+			fmt.Printf("Warning: %v\n", err)
+		}
+	}
+
+	// Get current context
+	context, err := cfg.GetCurrentContext()
+	if err != nil {
+		fmt.Printf("Warning: %v\n", err)
+		return
+	}
+
+	// Allow command line flags to override context settings
 	if server, _ := rootCmd.PersistentFlags().GetString("server"); server != "" {
-		cfg.Server = server
+		context.Server = server
 	}
 	if token, _ := rootCmd.PersistentFlags().GetString("token"); token != "" {
-		cfg.Token = token
+		context.Token = token
 	}
 }

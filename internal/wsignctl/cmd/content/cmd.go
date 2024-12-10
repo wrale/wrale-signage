@@ -5,8 +5,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// NewContentCmd creates a new content command
-func NewContentCmd() *cobra.Command {
+// NewCommand creates a new content command
+func NewCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "content",
 		Short: "Manage content sources",
