@@ -37,6 +37,7 @@ GOCLEAN=$(GOCMD) clean
 GOTEST=$(GOCMD) test
 GOGET=$(GOCMD) get
 GOVET=$(GOCMD) vet
+GOMOD=$(GOCMD) mod
 
 # Binary configuration
 BINARY_OUTPUT_DIR=bin
@@ -59,10 +60,10 @@ BUILD_CONTEXT=.
 COMPOSE_FILE=docker-compose.yml
 COMPOSE_DEV_FILE=docker-compose.dev.yml
 
-.PHONY: all clean test coverage lint sec-check vet fmt help install-tools run dev
+.PHONY: all clean test coverage lint sec-check vet fmt help install-tools run dev deps
 .PHONY: build build-server build-client run-server run-client
 .PHONY: docker-build docker-push docker-run docker-stop compose-up compose-down
-.PHONY: build-images push-images x y
+.PHONY: build-images push-images x y verify-deps
 
 help: ## Display available commands
 	@echo "Available Commands:"
@@ -82,7 +83,17 @@ clean: ## Clean build artifacts and containers
 	rm -f $(COVERAGE_FILE)
 	$(COMPOSE_ENGINE) -f $(COMPOSE_FILE) down --volumes --remove-orphans
 
-fmt: ## Format code
+deps: ## Install and verify dependencies
+	@echo "==> Verifying dependencies"
+	$(GOMOD) download
+	$(GOMOD) verify
+	$(GOMOD) tidy
+
+verify-deps: ## Verify dependency integrity
+	@echo "==> Checking module consistency"
+	$(GOMOD) verify
+
+fmt: deps ## Format code
 	@echo "==> Formatting code"
 	@go fmt ./...
 
@@ -109,11 +120,11 @@ coverage: ## Generate coverage report
 
 build-server: $(BINARY_OUTPUT_DIR) ## Build server binary
 	@echo "==> Building server"
-	$(GOBUILD) $(LDFLAGS) -o $(SERVER_PATH) ./cmd/server
+	$(GOBUILD) $(LDFLAGS) -o $(SERVER_PATH) ./cmd/wsignd
 
 build-client: $(BINARY_OUTPUT_DIR) ## Build client binary
 	@echo "==> Building client"
-	$(GOBUILD) $(LDFLAGS) -o $(CLIENT_PATH) ./cmd/client
+	$(GOBUILD) $(LDFLAGS) -o $(CLIENT_PATH) ./cmd/wsignctl
 
 build: build-server build-client ## Build all binaries
 
@@ -122,7 +133,7 @@ install-tools: ## Install development tools
 	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 	go install github.com/securego/gosec/v2/cmd/gosec@latest
 
-all: fmt vet lint sec-check test build ## Run full verification and build
+all: deps fmt vet lint sec-check test build ## Run full verification and build
 
 # Development targets
 run-server: build-server ## Run server
