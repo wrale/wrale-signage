@@ -6,13 +6,12 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/wrale/wrale-signage/api/types/v1alpha1"
-	"github.com/wrale/wrale-signage/internal/wsignctl/client"
+	"github.com/wrale/wrale-signage/internal/wsignctl/util"
 )
 
 func newUpdateCmd() *cobra.Command {
 	var (
 		url         string
-		contentType string
 		addProps    []string
 		removeProps []string
 	)
@@ -24,13 +23,9 @@ func newUpdateCmd() *cobra.Command {
 
 You can modify:
 - The URL where content is found
-- The content type
 - Properties (add or remove)`,
 		Example: `  # Update URL
   wsignctl content update menus --url=https://newmenu.example.com
-  
-  # Change content type
-  wsignctl content update intranet --type=emergency
   
   # Modify properties
   wsignctl content update weather \
@@ -40,32 +35,33 @@ You can modify:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 
-			// Parse properties to add
-			addPropMap := make(map[string]string)
+			// Parse properties to add/update
+			properties := make(map[string]string)
 			for _, prop := range addProps {
 				parts := strings.SplitN(prop, "=", 2)
 				if len(parts) != 2 {
 					return fmt.Errorf("invalid property format %q - use Key=Value", prop)
 				}
-				addPropMap[parts[0]] = parts[1]
+				properties[parts[0]] = parts[1]
 			}
 
-			// Validate properties to remove
+			// Mark properties to remove with empty values
 			for _, prop := range removeProps {
 				if strings.Contains(prop, "=") {
 					return fmt.Errorf("use just the property name to remove, not %q", prop)
 				}
+				properties[prop] = ""
 			}
 
 			// Build update
 			update := &v1alpha1.ContentSourceUpdate{
-				URL:              &url,
-				Type:             &contentType,
-				AddProperties:    addPropMap,
-				RemoveProperties: removeProps,
+				Properties: properties,
+			}
+			if url != "" {
+				update.URL = &url
 			}
 
-			c, err := client.GetClient()
+			c, err := util.GetClientFromCommand(cmd)
 			if err != nil {
 				return err
 			}
@@ -80,7 +76,6 @@ You can modify:
 	}
 
 	cmd.Flags().StringVar(&url, "url", "", "New URL for content")
-	cmd.Flags().StringVar(&contentType, "type", "", "New content type")
 	cmd.Flags().StringArrayVar(&addProps, "add-property", nil, "Add properties in Key=Value format")
 	cmd.Flags().StringArrayVar(&removeProps, "remove-property", nil, "Remove properties by name")
 

@@ -65,7 +65,8 @@ A content source needs:
 				},
 			}
 
-			c, err := util.GetClient()
+			// Get client using the command context
+			c, err := util.GetClientFromCommand(cmd)
 			if err != nil {
 				return fmt.Errorf("failed to create API client: %w", err)
 			}

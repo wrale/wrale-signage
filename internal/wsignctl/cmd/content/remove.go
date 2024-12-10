@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/wrale/wrale-signage/internal/wsignctl/client"
+	"github.com/wrale/wrale-signage/internal/wsignctl/util"
 )
 
 func newRemoveCmd() *cobra.Command {
@@ -26,7 +26,7 @@ Use --force to remove it anyway and invalidate those rules.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 
-			c, err := client.GetClient()
+			c, err := util.GetClientFromCommand(cmd)
 			if err != nil {
 				return err
 			}

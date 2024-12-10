@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/wrale/wrale-signage/internal/wsignctl/client"
 	"github.com/wrale/wrale-signage/internal/wsignctl/util"
 )
 
@@ -23,7 +22,7 @@ This shows where displays can be redirected to fetch content from.`,
   # Show detailed JSON output
   wsignctl content list -o json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := client.GetClient()
+			c, err := util.GetClientFromCommand(cmd)
 			if err != nil {
 				return err
 			}
