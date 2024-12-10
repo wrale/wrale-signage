@@ -1,0 +1,128 @@
+// The wsignd command implements the Wrale Signage server
+package main
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	_ "github.com/lib/pq"
+
+	"github.com/wrale/wrale-signage/internal/wsignd/config"
+)
+
+func main() {
+	// Initialize structured logging with JSON format for easier parsing
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	slog.SetDefault(logger)
+
+	// Load configuration from environment variables, with validation
+	cfg, err := config.Load()
+	if err != nil {
+		logger.Error("failed to load configuration", "error", err)
+		os.Exit(1)
+	}
+
+	// Establish database connection with proper connection pooling
+	db, err := setupDatabase(cfg.Database)
+	if err != nil {
+		logger.Error("failed to connect to database", "error", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	// Create HTTP server with timeouts and configuration
+	server := &http.Server{
+		Addr:         fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
+		Handler:      setupRouter(cfg, db, logger), // Will implement this next
+		ReadTimeout:  cfg.Server.ReadTimeout,
+		WriteTimeout: cfg.Server.WriteTimeout,
+		IdleTimeout:  cfg.Server.IdleTimeout,
+	}
+
+	// Start the server in a goroutine to allow for graceful shutdown
+	go func() {
+		logger.Info("starting server", 
+			"host", cfg.Server.Host,
+			"port", cfg.Server.Port,
+		)
+
+		var err error
+		if cfg.Server.TLSCert != "" && cfg.Server.TLSKey != "" {
+			err = server.ListenAndServeTLS(cfg.Server.TLSCert, cfg.Server.TLSKey)
+		} else {
+			err = server.ListenAndServe()
+		}
+		if err != nil && err != http.ErrServerClosed {
+			logger.Error("server error", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	// Set up graceful shutdown on interrupt signals
+	shutdown := make(chan os.Signal, 1)
+	signal.Notify(shutdown, os.Interrupt, syscall.SIGTERM)
+
+	// Wait for interrupt signal
+	<-shutdown
+	logger.Info("shutting down server...")
+
+	// Create shutdown context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Attempt graceful shutdown
+	if err := server.Shutdown(ctx); err != nil {
+		logger.Error("server shutdown error", "error", err)
+	}
+
+	logger.Info("server stopped")
+}
+
+// setupDatabase creates a database connection pool with proper configuration
+func setupDatabase(cfg config.DatabaseConfig) (*sql.DB, error) {
+	// Build Postgres connection string with all parameters
+	connStr := fmt.Sprintf(
+		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+		cfg.Host,
+		cfg.Port,
+		cfg.User,
+		cfg.Password,
+		cfg.Name,
+		cfg.SSLMode,
+	)
+
+	// Open database connection
+	db, err := sql.Open("postgres", connStr)
+	if err != nil {
+		return nil, fmt.Errorf("error opening database: %w", err)
+	}
+
+	// Configure connection pool
+	db.SetMaxOpenConns(cfg.MaxOpenConns)
+	db.SetMaxIdleConns(cfg.MaxIdleConns)
+	db.SetConnMaxLifetime(cfg.ConnMaxLifetime)
+
+	// Verify connection is working
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := db.PingContext(ctx); err != nil {
+		return nil, fmt.Errorf("error connecting to database: %w", err)
+	}
+
+	return db, nil
+}
+
+// setupRouter creates and configures the HTTP router with all application routes
+func setupRouter(cfg *config.Config, db *sql.DB, logger *slog.Logger) http.Handler {
+	// TODO: Implement router setup with proper dependency injection
+	// This will be implemented in the next commit when we add HTTP handlers
+	return http.NotFoundHandler()
+}
