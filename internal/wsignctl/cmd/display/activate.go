@@ -48,7 +48,7 @@ connected to the displays.{domain} endpoint.`,
 				properties[parts[0]] = parts[1]
 			}
 
-			client, err := util.GetClient(cmd)
+			client, err := util.GetClientFromCommand(cmd)
 			if err != nil {
 				return err
 			}
