@@ -2,7 +2,6 @@
 package v1alpha1
 
 import (
-	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -126,16 +125,6 @@ type DisplayUpdateRequest struct {
 	Properties map[string]string `json:"properties,omitempty"`
 }
 
-// Error represents an API error response
-type Error struct {
-	// Code is a machine-readable error code
-	Code string `json:"code"`
-	// Message is a human-readable error description
-	Message string `json:"message"`
-	// Details contains additional error context
-	Details json.RawMessage `json:"details,omitempty"`
-}
-
 // ContentAssignment represents content assigned to displays
 type ContentAssignment struct {
 	// TypeMeta describes the versioning of this object
@@ -151,16 +140,6 @@ type ContentAssignment struct {
 	ValidFrom *time.Time `json:"validFrom,omitempty"`
 	// ValidUntil indicates when this content expires
 	ValidUntil *time.Time `json:"validUntil,omitempty"`
-}
-
-// DisplaySelector defines criteria for targeting displays
-type DisplaySelector struct {
-	// SiteID selects displays at a specific site
-	SiteID string `json:"siteId,omitempty"`
-	// Zone selects displays in a specific zone
-	Zone string `json:"zone,omitempty"`
-	// Position selects displays at a specific position
-	Position string `json:"position,omitempty"`
 }
 
 // ContentAssignmentList is a list of content assignments
