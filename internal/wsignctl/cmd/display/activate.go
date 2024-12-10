@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/wrale/wrale-signage/api/types/v1alpha1"
+	"github.com/wrale/wrale-signage/internal/wsignctl/util"
 )
 
 // newActivateCommand creates a command for activating displays showing setup codes
@@ -16,6 +17,7 @@ func newActivateCommand() *cobra.Command {
 		zone     string
 		position string
 		labels   []string
+		output   string
 	)
 
 	cmd := &cobra.Command{
@@ -46,7 +48,7 @@ connected to the displays.{domain} endpoint.`,
 				properties[parts[0]] = parts[1]
 			}
 
-			client, err := getClient()
+			client, err := util.GetClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -62,11 +64,34 @@ connected to the displays.{domain} endpoint.`,
 				ActivationCode: code,
 			}
 
-			if err := client.ActivateDisplay(cmd.Context(), reg); err != nil {
+			// Attempt to activate the display
+			display, err := client.ActivateDisplay(cmd.Context(), reg)
+			if err != nil {
 				return fmt.Errorf("error activating display: %w", err)
 			}
 
-			fmt.Printf("Display activated successfully\n")
+			// Format and display the result
+			if output == "json" {
+				return util.PrintJSON(cmd.OutOrStdout(), display)
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(), "Display activated successfully!\n\n")
+			fmt.Fprintf(cmd.OutOrStdout(), "Details:\n")
+			fmt.Fprintf(cmd.OutOrStdout(), "  Name:     %s\n", display.Name)
+			fmt.Fprintf(cmd.OutOrStdout(), "  ID:       %s\n", display.ObjectMeta.ID)
+			fmt.Fprintf(cmd.OutOrStdout(), "  Location: %s/%s/%s\n",
+				display.Spec.Location.SiteID,
+				display.Spec.Location.Zone,
+				display.Spec.Location.Position)
+			fmt.Fprintf(cmd.OutOrStdout(), "  State:    %s\n", display.Status.State)
+
+			if len(display.Spec.Properties) > 0 {
+				fmt.Fprintf(cmd.OutOrStdout(), "\nProperties:\n")
+				for k, v := range display.Spec.Properties {
+					fmt.Fprintf(cmd.OutOrStdout(), "  %s: %s\n", k, v)
+				}
+			}
+
 			return nil
 		},
 	}
@@ -76,6 +101,7 @@ connected to the displays.{domain} endpoint.`,
 	cmd.Flags().StringVar(&zone, "zone", "", "Zone within site (required)")
 	cmd.Flags().StringVar(&position, "position", "", "Position within zone (required)")
 	cmd.Flags().StringArrayVar(&labels, "label", nil, "Additional labels in key=value format")
+	cmd.Flags().StringVarP(&output, "output", "o", "", "Output format (json)")
 
 	cmd.MarkFlagRequired("site-id")
 	cmd.MarkFlagRequired("zone")
