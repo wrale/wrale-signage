@@ -11,9 +11,17 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"sync"
 	"time"
 
 	"github.com/wrale/wrale-signage/api/types/v1alpha1"
+)
+
+var (
+	// singleton is the global client instance
+	singleton *Client
+	// singletonMu protects singleton access
+	singletonMu sync.RWMutex
 )
 
 // Client provides methods for interacting with the Wrale Signage API
@@ -76,6 +84,25 @@ func NewClient(baseURL string, options ...ClientOption) (*Client, error) {
 	return c, nil
 }
 
+// GetClient returns the singleton client instance
+func GetClient() *Client {
+	singletonMu.RLock()
+	if singleton != nil {
+		defer singletonMu.RUnlock()
+		return singleton
+	}
+	singletonMu.RUnlock()
+
+	return nil
+}
+
+// SetClient sets the singleton client instance
+func SetClient(c *Client) {
+	singletonMu.Lock()
+	singleton = c
+	singletonMu.Unlock()
+}
+
 // doRequest performs an HTTP request with automatic error handling
 func (c *Client) doRequest(ctx context.Context, method, pathStr string, body interface{}) (*http.Response, error) {
 	// Build full URL
@@ -116,9 +143,7 @@ func (c *Client) doRequest(ctx context.Context, method, pathStr string, body int
 	// Check for API errors
 	if resp.StatusCode >= 400 {
 		defer resp.Body.Close()
-		var apiErr struct {
-			Message string `json:"message"`
-		}
+		var apiErr v1alpha1.Error
 		if err := json.NewDecoder(resp.Body).Decode(&apiErr); err != nil {
 			return nil, fmt.Errorf("HTTP %d: unable to decode error response", resp.StatusCode)
 		}
@@ -126,66 +151,4 @@ func (c *Client) doRequest(ctx context.Context, method, pathStr string, body int
 	}
 
 	return resp, nil
-}
-
-// GetDisplay retrieves a display by ID
-func (c *Client) GetDisplay(ctx context.Context, id string) (*v1alpha1.Display, error) {
-	resp, err := c.doRequest(ctx, http.MethodGet, "/api/v1alpha1/displays/"+id, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var display v1alpha1.Display
-	if err := json.NewDecoder(resp.Body).Decode(&display); err != nil {
-		return nil, fmt.Errorf("error decoding response: %w", err)
-	}
-
-	return &display, nil
-}
-
-// ListDisplays retrieves all displays
-func (c *Client) ListDisplays(ctx context.Context) ([]v1alpha1.Display, error) {
-	resp, err := c.doRequest(ctx, http.MethodGet, "/api/v1alpha1/displays", nil)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var displays []v1alpha1.Display
-	if err := json.NewDecoder(resp.Body).Decode(&displays); err != nil {
-		return nil, fmt.Errorf("error decoding response: %w", err)
-	}
-
-	return displays, nil
-}
-
-// CreateDisplay creates a new display
-func (c *Client) CreateDisplay(ctx context.Context, display *v1alpha1.Display) error {
-	resp, err := c.doRequest(ctx, http.MethodPost, "/api/v1alpha1/displays", display)
-	if err != nil {
-		return err
-	}
-	resp.Body.Close()
-	return nil
-}
-
-// UpdateDisplay updates an existing display
-func (c *Client) UpdateDisplay(ctx context.Context, display *v1alpha1.Display) error {
-	resp, err := c.doRequest(ctx, http.MethodPut, "/api/v1alpha1/displays/"+display.Name, display)
-	if err != nil {
-		return err
-	}
-	resp.Body.Close()
-	return nil
-}
-
-// DeleteDisplay deletes a display
-func (c *Client) DeleteDisplay(ctx context.Context, id string) error {
-	resp, err := c.doRequest(ctx, http.MethodDelete, "/api/v1alpha1/displays/"+id, nil)
-	if err != nil {
-		return err
-	}
-	resp.Body.Close()
-	return nil
 }
