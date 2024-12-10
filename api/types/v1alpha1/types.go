@@ -19,6 +19,32 @@ type RedirectRule struct {
 	Schedule *Schedule `json:"schedule,omitempty"`
 }
 
+// RuleFilter defines criteria for filtering redirect rules
+type RuleFilter struct {
+	// DisplaySelector contains location-based filtering criteria
+	DisplaySelector `json:"displaySelector"`
+}
+
+// RedirectRuleUpdate specifies changes to an existing redirect rule
+type RedirectRuleUpdate struct {
+	// Priority is the new rule priority (nil means no change)
+	Priority *int `json:"priority,omitempty"`
+	// DisplaySelector contains updated location selectors (nil means no change)
+	DisplaySelector *DisplaySelector `json:"displaySelector,omitempty"`
+	// Content contains updated content redirect (nil means no change)
+	Content *ContentRedirect `json:"content,omitempty"`
+	// Schedule contains updated scheduling (nil means no change, empty means remove schedule)
+	Schedule *Schedule `json:"schedule,omitempty"`
+}
+
+// RuleOrderUpdate specifies how to change a rule's position in the evaluation order
+type RuleOrderUpdate struct {
+	// Position specifies where to move the rule ("before", "after", "start", "end")
+	Position string `json:"position"`
+	// RelativeTo is the name of the reference rule for before/after positions
+	RelativeTo string `json:"relativeTo,omitempty"`
+}
+
 // ContentRedirect specifies where to redirect matching displays
 type ContentRedirect struct {
 	// ContentType identifies the type of content (e.g., "welcome", "menu", "emergency")
@@ -49,10 +75,30 @@ type TimeRange struct {
 	End string `json:"end"`
 }
 
+// DisplaySelector identifies displays by their location attributes
+type DisplaySelector struct {
+	// SiteID identifies a physical location
+	SiteID string `json:"siteId,omitempty"`
+	// Zone identifies an area within a site
+	Zone string `json:"zone,omitempty"`
+	// Position identifies a specific spot within a zone
+	Position string `json:"position,omitempty"`
+}
+
 // ListResponse wraps lists of items with metadata
 type ListResponse struct {
 	// Items contains the listed objects
 	Items []interface{} `json:"items"`
 	// TotalCount is the total number of matching items
 	TotalCount int `json:"totalCount,omitempty"`
+}
+
+// Error represents an API error response
+type Error struct {
+	// Code is a machine-readable error code
+	Code string `json:"code"`
+	// Message is a human-readable error description
+	Message string `json:"message"`
+	// Details contains additional error context
+	Details interface{} `json:"details,omitempty"`
 }

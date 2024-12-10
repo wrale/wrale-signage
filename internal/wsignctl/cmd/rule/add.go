@@ -93,7 +93,7 @@ Rules are evaluated in priority order until a matching rule is found.`,
 			}
 
 			// Add the rule through the API
-			client, err := util.GetClient(cmd)
+			client, err := util.GetClientFromCommand(cmd)
 			if err != nil {
 				return err
 			}

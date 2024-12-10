@@ -59,28 +59,28 @@ You can:
 				return err
 			}
 
-			var targetRule string
 			var position string
+			var relativeTo string
 
 			switch {
 			case opts.beforeRule != "":
-				targetRule = opts.beforeRule
 				position = "before"
+				relativeTo = opts.beforeRule
 			case opts.afterRule != "":
-				targetRule = opts.afterRule
 				position = "after"
+				relativeTo = opts.afterRule
 			case opts.moveToStart:
 				position = "start"
 			case opts.moveToEnd:
 				position = "end"
 			}
 
-			if err := client.ReorderRedirectRule(cmd.Context(), name, position, targetRule); err != nil {
+			if err := client.ReorderRedirectRule(cmd.Context(), name, position, relativeTo); err != nil {
 				return fmt.Errorf("error reordering rule: %w", err)
 			}
 
-			if targetRule != "" {
-				fmt.Printf("Moved rule %q %s %q\n", name, position, targetRule)
+			if relativeTo != "" {
+				fmt.Printf("Moved rule %q %s %q\n", name, position, relativeTo)
 			} else {
 				fmt.Printf("Moved rule %q to %s of list\n", name, position)
 			}

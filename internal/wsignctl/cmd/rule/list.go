@@ -41,12 +41,14 @@ is the order they will be checked when a display requests content.`,
 
 			// Get rules with optional location filtering
 			filter := &v1alpha1.RuleFilter{
-				SiteID:   opts.siteID,
-				Zone:     opts.zone,
-				Position: opts.position,
+				DisplaySelector: v1alpha1.DisplaySelector{
+					SiteID:   opts.siteID,
+					Zone:     opts.zone,
+					Position: opts.position,
+				},
 			}
 
-			rules, err := client.ListRedirectRules(cmd.Context())
+			rules, err := client.ListRedirectRules(cmd.Context(), filter)
 			if err != nil {
 				return fmt.Errorf("error listing rules: %w", err)
 			}
