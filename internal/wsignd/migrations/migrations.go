@@ -10,24 +10,24 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
 
 //go:embed *.sql
 var migrationFiles embed.FS
 
-var migrationFilePattern = regexp.MustCompile(`^(\d{3})_(.+)\.sql$`)
+var (
+	migrationFilePattern = regexp.MustCompile(`^(\d{3})_(.+)\.sql$`)
+	functionPattern     = regexp.MustCompile(`(?si)CREATE(?:\s+OR\s+REPLACE)?\s+FUNCTION.*?LANGUAGE`)
+)
 
 // Migration represents a single database migration
 type Migration struct {
-	// Version is a unique identifier for this migration
-	Version int
-	// Description provides context about what this migration does
+	Version     int
 	Description string
-	// Up contains SQL statements for applying the migration
-	Up string
-	// Down contains SQL statements for reverting the migration
-	Down string
+	Up          string
+	Down        string
 }
 
 // Manager handles executing database migrations
@@ -42,7 +42,6 @@ func NewManager(db *sql.DB) *Manager {
 
 // LoadMigrations reads all SQL migration files
 func (m *Manager) LoadMigrations() ([]Migration, error) {
-	// Read embedded migration files
 	entries, err := migrationFiles.ReadDir(".")
 	if err != nil {
 		return nil, fmt.Errorf("error reading migrations: %w", err)
@@ -57,18 +56,14 @@ func (m *Manager) LoadMigrations() ([]Migration, error) {
 		filename := entry.Name()
 		matches := migrationFilePattern.FindStringSubmatch(filename)
 		if matches == nil {
-			continue // Skip files that don't match pattern
+			continue
 		}
 
-		// Parse version and description from filename
 		version, err := strconv.Atoi(matches[1])
 		if err != nil {
 			return nil, fmt.Errorf("invalid migration version in %s: %w", filename, err)
 		}
 
-		description := matches[2]
-
-		// Read migration content
 		content, err := migrationFiles.ReadFile(filename)
 		if err != nil {
 			return nil, fmt.Errorf("error reading migration %s: %w", filename, err)
@@ -76,14 +71,11 @@ func (m *Manager) LoadMigrations() ([]Migration, error) {
 
 		migrations = append(migrations, Migration{
 			Version:     version,
-			Description: description,
+			Description: matches[2],
 			Up:         string(content),
-			// Down migrations not currently supported
-			Down: "",
 		})
 	}
 
-	// Sort migrations by version
 	sort.Slice(migrations, func(i, j int) bool {
 		return migrations[i].Version < migrations[j].Version
 	})
@@ -93,24 +85,20 @@ func (m *Manager) LoadMigrations() ([]Migration, error) {
 
 // ApplyMigrations runs any pending migrations
 func (m *Manager) ApplyMigrations(ctx context.Context) error {
-	// Ensure migration table exists
 	if err := m.ensureMigrationTable(ctx); err != nil {
 		return fmt.Errorf("error creating migration table: %w", err)
 	}
 
-	// Load migrations
 	migrations, err := m.LoadMigrations()
 	if err != nil {
 		return fmt.Errorf("error loading migrations: %w", err)
 	}
 
-	// Get applied migrations
 	applied, err := m.getAppliedMigrations(ctx)
 	if err != nil {
 		return fmt.Errorf("error getting applied migrations: %w", err)
 	}
 
-	// Apply pending migrations in order
 	for _, migration := range migrations {
 		if _, ok := applied[migration.Version]; !ok {
 			if err := m.applyMigration(ctx, migration); err != nil {
@@ -164,6 +152,40 @@ func (m *Manager) getAppliedMigrations(ctx context.Context) (map[int]time.Time, 
 	return applied, rows.Err()
 }
 
+// splitStatements splits SQL into individual statements while preserving functions
+func (m *Manager) splitStatements(sql string) []string {
+	// Extract function definitions first
+	functions := functionPattern.FindAllString(sql, -1)
+	for i, fn := range functions {
+		sql = strings.Replace(sql, fn, fmt.Sprintf("--FUNCTION_%d--", i), 1)
+	}
+
+	// Split remaining SQL on semicolons
+	statements := strings.Split(sql, ";")
+
+	// Restore function definitions
+	for i, statement := range statements {
+		statement = strings.TrimSpace(statement)
+		if statement == "" {
+			continue
+		}
+		for j, fn := range functions {
+			statement = strings.Replace(statement, fmt.Sprintf("--FUNCTION_%d--", j), fn, 1)
+		}
+		statements[i] = statement
+	}
+
+	// Remove empty statements
+	var result []string
+	for _, stmt := range statements {
+		if strings.TrimSpace(stmt) != "" {
+			result = append(result, stmt)
+		}
+	}
+
+	return result
+}
+
 // applyMigration executes a single migration within a transaction
 func (m *Manager) applyMigration(ctx context.Context, migration Migration) error {
 	tx, err := m.db.BeginTx(ctx, nil)
@@ -177,9 +199,12 @@ func (m *Manager) applyMigration(ctx context.Context, migration Migration) error
 		}
 	}()
 
-	// Apply the migration
-	if _, err := tx.ExecContext(ctx, migration.Up); err != nil {
-		return err
+	// Split and execute statements
+	statements := m.splitStatements(migration.Up)
+	for _, stmt := range statements {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("error executing statement: %w", err)
+		}
 	}
 
 	// Record the migration
