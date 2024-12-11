@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -111,7 +110,7 @@ func TestReportEvents(t *testing.T) {
 				mockSvc.On("ReportEvents", mock.Anything, matchEventBatch(*tt.batch)).Return(tt.serviceError)
 			}
 
-			handler := NewHandler(mockSvc, slog.Default())
+			handler := NewHandler(mockSvc)
 
 			var body []byte
 			if tt.batch != nil {
@@ -164,7 +163,7 @@ func TestGetURLHealth(t *testing.T) {
 				mockSvc.On("GetURLHealth", mock.Anything, tt.url).Return(tt.mockHealth, tt.mockError)
 			}
 
-			handler := NewHandler(mockSvc, slog.Default())
+			handler := NewHandler(mockSvc)
 
 			req := httptest.NewRequest("GET", "/health/"+tt.url, nil)
 			w := httptest.NewRecorder()
