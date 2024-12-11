@@ -8,7 +8,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/wrale/wrale-signage/api/types/v1alpha1"
-	"github.com/wrale/wrale-signage/internal/wsignctl/client"
 	"github.com/wrale/wrale-signage/internal/wsignctl/util"
 )
 
@@ -72,8 +71,6 @@ connected to the displays.{domain} endpoint.`,
 			// Attempt to activate the display
 			display, err := client.ActivateDisplay(cmd.Context(), reg)
 			if err != nil {
-				// Check for API error
-				var reqErr *client.RequestError
 				if strings.Contains(err.Error(), "activation code not found") {
 					fmt.Fprintf(os.Stderr, "Error: The activation code %q was not found.\n", code)
 					fmt.Fprintf(os.Stderr, "Make sure:\n")
