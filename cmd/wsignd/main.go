@@ -22,6 +22,7 @@ import (
 	contentpg "github.com/wrale/wrale-signage/internal/wsignd/content/postgres"
 	"github.com/wrale/wrale-signage/internal/wsignd/database"
 	"github.com/wrale/wrale-signage/internal/wsignd/display"
+	"github.com/wrale/wrale-signage/internal/wsignd/display/activation"
 	displayhttp "github.com/wrale/wrale-signage/internal/wsignd/display/http"
 	displaypg "github.com/wrale/wrale-signage/internal/wsignd/display/postgres"
 	"github.com/wrale/wrale-signage/internal/wsignd/display/service"
@@ -130,8 +131,12 @@ func setupRouter(cfg *config.Config, db *sql.DB, logger *slog.Logger) http.Handl
 	displayPublisher := &noopEventPublisher{} // TODO: Implement real event publisher
 	displayService := service.New(displayRepo, displayPublisher, logger)
 
+	// Set up activation service
+	activationRepo := activation.NewRepository(db, logger)
+	activationService := activation.NewService(activationRepo)
+
 	// Create and mount display handlers
-	displayHandler := displayhttp.NewHandler(displayService, logger)
+	displayHandler := displayhttp.NewHandler(displayService, activationService, logger)
 	r.Mount("/api/v1alpha1/displays", displayHandler.Router())
 
 	// Set up content service dependencies

@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/mock"
 	"github.com/wrale/wrale-signage/internal/wsignd/display"
+	"github.com/wrale/wrale-signage/internal/wsignd/display/activation"
 )
 
 type mockService struct {
@@ -65,11 +66,37 @@ func (m *mockService) SetProperty(ctx context.Context, id uuid.UUID, key, value 
 	return args.Error(0)
 }
 
-// newTestHandler creates a new handler with mock service for testing
+type mockActivationService struct {
+	mock.Mock
+}
+
+func (m *mockActivationService) GenerateCode(ctx context.Context) (*activation.DeviceCode, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*activation.DeviceCode), args.Error(1)
+}
+
+func (m *mockActivationService) ActivateCode(ctx context.Context, code string) (uuid.UUID, error) {
+	args := m.Called(ctx, code)
+	return args.Get(0).(uuid.UUID), args.Error(1)
+}
+
+func (m *mockActivationService) ValidateCode(ctx context.Context, code string) (*activation.DeviceCode, error) {
+	args := m.Called(ctx, code)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*activation.DeviceCode), args.Error(1)
+}
+
+// newTestHandler creates a new handler with mock services for testing
 func newTestHandler() (*Handler, *mockService) {
 	mockSvc := &mockService{}
+	mockActSvc := &mockActivationService{}
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	return NewHandler(mockSvc, logger), mockSvc
+	return NewHandler(mockSvc, mockActSvc, logger), mockSvc
 }
 
 // mockChiContext adds a chi routing context to the request
