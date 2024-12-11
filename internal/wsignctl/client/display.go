@@ -3,11 +3,23 @@ package client
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 
 	"github.com/wrale/wrale-signage/api/types/v1alpha1"
 )
+
+// closeBody safely closes a response body and wraps any error with the original error
+func closeBody(body io.ReadCloser, err error) error {
+	if cerr := body.Close(); cerr != nil {
+		if err != nil {
+			return fmt.Errorf("original error: %v, close error: %v", err, cerr)
+		}
+		return cerr
+	}
+	return err
+}
 
 // GetDisplay retrieves a display by ID
 func (c *Client) GetDisplay(ctx context.Context, id string) (*v1alpha1.Display, error) {
@@ -19,10 +31,10 @@ func (c *Client) GetDisplay(ctx context.Context, id string) (*v1alpha1.Display, 
 
 	var display v1alpha1.Display
 	if err := decodeResponse(resp, &display); err != nil {
-		return nil, err
+		return nil, closeBody(resp.Body, err)
 	}
 
-	return &display, nil
+	return &display, closeBody(resp.Body, nil)
 }
 
 // ListDisplays retrieves displays matching the given selector
@@ -52,10 +64,10 @@ func (c *Client) ListDisplays(ctx context.Context, selector v1alpha1.DisplaySele
 
 	var displays []v1alpha1.Display
 	if err := decodeResponse(resp, &displays); err != nil {
-		return nil, err
+		return nil, closeBody(resp.Body, err)
 	}
 
-	return displays, nil
+	return displays, closeBody(resp.Body, nil)
 }
 
 // CreateDisplay creates a new display
@@ -65,8 +77,7 @@ func (c *Client) CreateDisplay(ctx context.Context, name string, display *v1alph
 	if err != nil {
 		return fmt.Errorf("failed to create display: %w", err)
 	}
-	resp.Body.Close()
-	return nil
+	return closeBody(resp.Body, nil)
 }
 
 // UpdateDisplay updates an existing display's location and properties
@@ -80,8 +91,7 @@ func (c *Client) UpdateDisplay(ctx context.Context, name string, location *v1alp
 	if err != nil {
 		return fmt.Errorf("failed to update display: %w", err)
 	}
-	resp.Body.Close()
-	return nil
+	return closeBody(resp.Body, nil)
 }
 
 // DeleteDisplay deletes a display
@@ -90,8 +100,7 @@ func (c *Client) DeleteDisplay(ctx context.Context, name string) error {
 	if err != nil {
 		return fmt.Errorf("failed to delete display: %w", err)
 	}
-	resp.Body.Close()
-	return nil
+	return closeBody(resp.Body, nil)
 }
 
 // ActivateDisplay activates a display using its registration information
@@ -104,8 +113,8 @@ func (c *Client) ActivateDisplay(ctx context.Context, req *v1alpha1.DisplayRegis
 
 	var result v1alpha1.DisplayRegistrationResponse
 	if err := decodeResponse(resp, &result); err != nil {
-		return nil, err
+		return nil, closeBody(resp.Body, err)
 	}
 
-	return result.Display, nil
+	return result.Display, closeBody(resp.Body, nil)
 }

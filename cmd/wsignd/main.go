@@ -12,9 +12,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	_ "github.com/lib/pq"
 
 	"github.com/wrale/wrale-signage/internal/wsignd/config"
+	"github.com/wrale/wrale-signage/internal/wsignd/display"
+	displayhttp "github.com/wrale/wrale-signage/internal/wsignd/display/http"
+	"github.com/wrale/wrale-signage/internal/wsignd/display/postgres"
 )
 
 func main() {
@@ -40,7 +44,7 @@ func main() {
 	// Create HTTP server with timeouts and configuration
 	server := &http.Server{
 		Addr:         fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
-		Handler:      setupRouter(cfg, db, logger), // Will implement this next
+		Handler:      setupRouter(cfg, db, logger),
 		ReadTimeout:  cfg.Server.ReadTimeout,
 		WriteTimeout: cfg.Server.WriteTimeout,
 		IdleTimeout:  cfg.Server.IdleTimeout,
@@ -122,7 +126,23 @@ func setupDatabase(cfg config.DatabaseConfig) (*sql.DB, error) {
 
 // setupRouter creates and configures the HTTP router with all application routes
 func setupRouter(cfg *config.Config, db *sql.DB, logger *slog.Logger) http.Handler {
-	// TODO: Implement router setup with proper dependency injection
-	// This will be implemented in the next commit when we add HTTP handlers
-	return http.NotFoundHandler()
+	r := chi.NewRouter()
+
+	// Set up display service dependencies
+	repo := postgres.NewRepository(db)
+	publisher := &noopEventPublisher{} // TODO: Implement real event publisher
+	service := display.NewService(repo, publisher)
+
+	// Create and mount display handlers
+	displayHandler := displayhttp.NewHandler(service, logger)
+	r.Mount("/", displayhttp.NewRouter(displayHandler))
+
+	return r
+}
+
+// noopEventPublisher is a temporary implementation of display.EventPublisher
+type noopEventPublisher struct{}
+
+func (p *noopEventPublisher) Publish(ctx context.Context, event display.Event) error {
+	return nil
 }
