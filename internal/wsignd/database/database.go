@@ -76,12 +76,16 @@ func RunMigrations(db *sql.DB, migrationsPath string) error {
 		}
 
 		if _, err := tx.Exec(string(content)); err != nil {
-			tx.Rollback()
+			if rbErr := tx.Rollback(); rbErr != nil {
+				return fmt.Errorf("failed to rollback migration %s: %v (original error: %w)", file.Name(), rbErr, err)
+			}
 			return fmt.Errorf("failed to execute migration %s: %w", file.Name(), err)
 		}
 
 		if _, err := tx.Exec("INSERT INTO schema_migrations (version) VALUES ($1)", file.Name()); err != nil {
-			tx.Rollback()
+			if rbErr := tx.Rollback(); rbErr != nil {
+				return fmt.Errorf("failed to rollback migration record %s: %v (original error: %w)", file.Name(), rbErr, err)
+			}
 			return fmt.Errorf("failed to record migration %s: %w", file.Name(), err)
 		}
 

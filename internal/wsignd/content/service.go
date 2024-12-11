@@ -2,7 +2,6 @@ package content
 
 import (
 	"context"
-	"sync"
 	"time"
 )
 
@@ -10,7 +9,6 @@ type contentService struct {
 	processor EventProcessor
 	metrics   MetricsAggregator
 	monitor   HealthMonitor
-	mu        sync.RWMutex
 }
 
 func NewService(processor EventProcessor, metrics MetricsAggregator, monitor HealthMonitor) Service {
