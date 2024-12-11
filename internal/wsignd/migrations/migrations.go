@@ -20,7 +20,7 @@ var migrationFiles embed.FS
 var (
 	migrationFilePattern = regexp.MustCompile(`^(\d{3})_(.+)\.sql$`)
 	functionPattern      = regexp.MustCompile(`(?si)CREATE(?:\s+OR\s+REPLACE)?\s+FUNCTION.*?LANGUAGE`)
-	commentPattern       = regexp.MustCompile(`(?m)^--.*$|/\*(?s).*?\*/`)
+	commentPattern      = regexp.MustCompile(`(?m)^--.*$|/\*(?s).*?\*/`)
 )
 
 // Migration represents a single database migration
@@ -55,8 +55,11 @@ func (m *Manager) LoadMigrations() ([]Migration, error) {
 		}
 
 		filename := entry.Name()
+		log.Printf("Found migration file: %s", filename)
+
 		matches := migrationFilePattern.FindStringSubmatch(filename)
 		if matches == nil {
+			log.Printf("Skipping non-migration file: %s", filename)
 			continue
 		}
 
@@ -64,6 +67,7 @@ func (m *Manager) LoadMigrations() ([]Migration, error) {
 		if err != nil {
 			return nil, fmt.Errorf("invalid migration version in %s: %w", filename, err)
 		}
+		log.Printf("Parsing migration %s with version %d", filename, version)
 
 		content, err := migrationFiles.ReadFile(filename)
 		if err != nil {
@@ -73,13 +77,18 @@ func (m *Manager) LoadMigrations() ([]Migration, error) {
 		migrations = append(migrations, Migration{
 			Version:     version,
 			Description: matches[2],
-			Up:          string(content),
+			Up:         string(content),
 		})
 	}
 
 	sort.Slice(migrations, func(i, j int) bool {
 		return migrations[i].Version < migrations[j].Version
 	})
+
+	log.Printf("Loaded %d migrations", len(migrations))
+	for _, m := range migrations {
+		log.Printf("Migration %d: %s", m.Version, m.Description)
+	}
 
 	return migrations, nil
 }
@@ -102,10 +111,14 @@ func (m *Manager) ApplyMigrations(ctx context.Context) error {
 
 	for _, migration := range migrations {
 		if _, ok := applied[migration.Version]; !ok {
+			log.Printf("Applying migration %d: %s", migration.Version, migration.Description)
 			if err := m.applyMigration(ctx, migration); err != nil {
 				return fmt.Errorf("error applying migration %d: %w",
 					migration.Version, err)
 			}
+			log.Printf("Successfully applied migration %d", migration.Version)
+		} else {
+			log.Printf("Skipping already applied migration %d", migration.Version)
 		}
 	}
 
@@ -150,6 +163,7 @@ func (m *Manager) getAppliedMigrations(ctx context.Context) (map[int]time.Time, 
 		applied[version] = appliedAt
 	}
 
+	log.Printf("Found %d applied migrations", len(applied))
 	return applied, rows.Err()
 }
 
@@ -167,7 +181,9 @@ func (m *Manager) cleanSQL(sql string) string {
 			cleaned = append(cleaned, line)
 		}
 	}
-	return strings.Join(cleaned, "\n")
+	sql = strings.Join(cleaned, "\n")
+	log.Printf("Cleaned SQL: %s", sql)
+	return sql
 }
 
 // splitStatements splits SQL into individual statements while preserving functions
@@ -200,6 +216,7 @@ func (m *Manager) splitStatements(sql string) []string {
 		result = append(result, stmt)
 	}
 
+	log.Printf("Split into %d statements", len(result))
 	return result
 }
 
@@ -218,7 +235,8 @@ func (m *Manager) applyMigration(ctx context.Context, migration Migration) error
 
 	// Split and execute statements
 	statements := m.splitStatements(migration.Up)
-	for _, stmt := range statements {
+	for i, stmt := range statements {
+		log.Printf("Executing statement %d of migration %d: %s", i+1, migration.Version, stmt)
 		if _, err := tx.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("error executing statement: %w", err)
 		}
