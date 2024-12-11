@@ -142,7 +142,7 @@ func setupRouter(cfg *config.Config, db *sql.DB, logger *slog.Logger) http.Handl
 	contentService := content.NewService(contentRepo, contentProcessor, contentMetrics, contentMonitor)
 
 	// Create content handler
-	contentHandler := contenthttp.NewHandler(contentService)
+	contentHandler := contenthttp.NewHandler(contentService, logger.With().Str("component", "content").Logger())
 	r.Mount("/api/v1alpha1/content", contentHandler.Router())
 
 	return r
