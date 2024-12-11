@@ -1,0 +1,86 @@
+graph TD
+    %% Entry Points with Configuration
+    cmd1["/cmd/wsignd/main.go:<br>Server binary with dependency injection"]
+    cmd2["/cmd/wsignctl/main.go:<br>CLI with cobra and config"]
+    
+    %% API Version Management
+    ver1["/api/doc.go:<br>API compatibility and upgrade guide"]
+    ver2["/api/version/version.go:<br>Version compatibility checking"]
+    ver3["/api/version/conversion.go:<br>Version conversion utilities"]
+
+    %% Versioned API Types
+    api1["/api/types/v1alpha1/types.go:<br>Core API type definitions"]
+    api2["/api/types/v1alpha1/validation.go:<br>Type validation rules"]
+    api3["/api/types/v1alpha1/deepcopy.go:<br>Generated deep copy funcs"]
+    api4["/api/types/v1alpha1/conversion.go:<br>Version conversion code"]
+    
+    %% Server Implementation (wsignd)
+    wsd1["/internal/wsignd/server.go:<br>HTTP server setup"]
+    wsd2["/internal/wsignd/options.go:<br>Server configuration"]
+    
+    %% Display Management
+    wsd3["/internal/wsignd/display/display.go:<br>Display domain model"]
+    wsd4["/internal/wsignd/display/interfaces.go:<br>Repository and service interfaces"]
+    wsd5["/internal/wsignd/display/postgres.go:<br>Postgres implementation"]
+    wsd6["/internal/wsignd/display/service.go:<br>Business logic implementation"]
+    wsd7["/internal/wsignd/display/http.go:<br>HTTP handlers"]
+    wsd8["/internal/wsignd/display/display_test.go:<br>Unit tests with mocks"]
+    
+    %% Content Delivery
+    wsd9["/internal/wsignd/content/content.go:<br>Content domain and rules"]
+    wsd10["/internal/wsignd/content/interfaces.go:<br>Content service interfaces"]
+    wsd11["/internal/wsignd/content/postgres.go:<br>Content storage"]
+    wsd12["/internal/wsignd/content/redis.go:<br>Content caching"]
+    wsd13["/internal/wsignd/content/service.go:<br>Content orchestration"]
+    wsd14["/internal/wsignd/content/http.go:<br>Content endpoints"]
+    wsd15["/internal/wsignd/content/content_test.go:<br>Content tests"]
+    
+    %% Enhanced Observability
+    obs1["/internal/wsignd/observability/doc.go:<br>Observability patterns"]
+    obs2["/internal/wsignd/observability/metrics.go:<br>Prometheus metrics"]
+    obs3["/internal/wsignd/observability/logger.go:<br>Structured logging"]
+    obs4["/internal/wsignd/observability/tracing.go:<br>Request tracing"]
+    obs5["/internal/wsignd/observability/debug.go:<br>Debug endpoints"]
+    
+    %% CLI Tool (wsignctl) 
+    cli1["/internal/wsignctl/cmd/root.go:<br>Root command setup"]
+    cli2["/internal/wsignctl/cmd/display/display.go:<br>Display commands"]
+    cli3["/internal/wsignctl/cmd/content/content.go:<br>Content commands"]
+    cli4["/internal/wsignctl/cmd/debug/debug.go:<br>Debugging commands"]
+    
+    %% Shared Client Library
+    cli5["/internal/wsignctl/client/client.go:<br>Base client with retries"]
+    cli6["/internal/wsignctl/client/display.go:<br>Display operations"]
+    cli7["/internal/wsignctl/client/content.go:<br>Content operations"]
+    cli8["/internal/wsignctl/client/client_test.go:<br>Client tests"]
+    
+    %% Public SDK
+    sdk1["/pkg/wsign/client.go:<br>Public SDK entry point"]
+    sdk2["/pkg/wsign/interfaces.go:<br>Public interfaces"]
+    sdk3["/pkg/wsign/version.go:<br>Version compatibility"]
+    
+    %% Testing Support
+    test1["/test/integration/suite.go:<br>Integration test suite"]
+    test2["/test/integration/display_test.go:<br>Display flows"]
+    test3["/test/integration/content_test.go:<br>Content delivery"]
+    test4["/test/mocks/mocks.go:<br>Generated interface mocks"]
+    test5["/test/fixtures/fixtures.go:<br>Test data builders"]
+
+    %% Key Dependencies
+    ver1 --> api1
+    api1 --> wsd3
+    api1 --> wsd9
+    
+    wsd4 --> wsd6
+    wsd6 --> wsd7
+    wsd10 --> wsd13
+    wsd13 --> wsd14
+    
+    obs1 --> wsd1
+    obs2 & obs3 & obs4 --> obs1
+    
+    cli5 --> cli2
+    cli5 --> cli3
+    
+    sdk1 --> api1
+    test1 --> sdk1
