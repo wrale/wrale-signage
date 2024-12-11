@@ -58,8 +58,8 @@ func (r *repository) SaveEvent(ctx context.Context, event content.Event) error {
 	err := database.RunInTx(ctx, r.db, nil, func(tx *database.Tx) error {
 		// Verify display exists
 		var exists bool
-		err := tx.QueryRowContext(ctx, 
-			"SELECT EXISTS(SELECT 1 FROM displays WHERE id = $1)", 
+		err := tx.QueryRowContext(ctx,
+			"SELECT EXISTS(SELECT 1 FROM displays WHERE id = $1)",
 			event.DisplayID,
 		).Scan(&exists)
 		if err != nil {
@@ -103,19 +103,20 @@ func (r *repository) GetURLMetrics(ctx context.Context, url string, since time.T
 	metrics.ErrorRates = make(map[string]float64)
 
 	err := database.RunInTx(ctx, r.db, &database.TxOptions{ReadOnly: true}, func(tx *database.Tx) error {
-		// Get total event count first to prevent division by zero
-		var totalCount int64
+		// Get load and error counts
 		err := tx.QueryRowContext(ctx, `
-			SELECT COUNT(*) 
+			SELECT 
+				COUNT(*) FILTER (WHERE type = 'CONTENT_LOADED'),
+				COUNT(*) FILTER (WHERE type = 'CONTENT_ERROR')
 			FROM content_events 
 			WHERE url = $1 AND timestamp >= $2
-		`, url, since).Scan(&totalCount)
+		`, url, since).Scan(&metrics.LoadCount, &metrics.ErrorCount)
 		if err != nil {
 			return err
 		}
 
-		if totalCount == 0 {
-			// No events found, return empty metrics
+		// If no events found, return empty metrics
+		if metrics.LoadCount == 0 && metrics.ErrorCount == 0 {
 			return nil
 		}
 
@@ -129,50 +130,51 @@ func (r *repository) GetURLMetrics(ctx context.Context, url string, since time.T
 			return err
 		}
 
-		// Get load and error counts
+		// Get average timing metrics for successful loads only
 		err = tx.QueryRowContext(ctx, `
+			WITH valid_metrics AS (
+				SELECT 
+					(metrics->>'loadTime')::numeric AS load_time,
+					(metrics->>'renderTime')::numeric AS render_time
+				FROM content_events 
+				WHERE url = $1 
+					AND timestamp >= $2
+					AND type = 'CONTENT_LOADED'
+					AND metrics IS NOT NULL
+					AND metrics ? 'loadTime'
+					AND metrics ? 'renderTime'
+			)
 			SELECT 
-				COUNT(*) FILTER (WHERE type = 'CONTENT_LOADED'),
-				COUNT(*) FILTER (WHERE type = 'CONTENT_ERROR')
-			FROM content_events 
-			WHERE url = $1 AND timestamp >= $2
-		`, url, since).Scan(&metrics.LoadCount, &metrics.ErrorCount)
-		if err != nil && err != sql.ErrNoRows {
-			return err
-		}
-
-		// Get average timing metrics using NULLIF to handle zero counts
-		err = tx.QueryRowContext(ctx, `
-			SELECT 
-				ROUND(COALESCE(AVG(CAST(COALESCE(metrics->>'loadTime', '0') AS bigint)), 0)),
-				ROUND(COALESCE(AVG(CAST(COALESCE(metrics->>'renderTime', '0') AS bigint)), 0))
-			FROM content_events 
-			WHERE url = $1 
-				AND timestamp >= $2
-				AND metrics IS NOT NULL
-				AND type = 'CONTENT_LOADED'
+				COALESCE(ROUND(AVG(load_time))::bigint, 0),
+				COALESCE(ROUND(AVG(render_time))::bigint, 0)
+			FROM valid_metrics
 		`, url, since).Scan(&metrics.AvgLoadTime, &metrics.AvgRenderTime)
 		if err != nil && err != sql.ErrNoRows {
 			return err
 		}
 
-		// Get error rates by code
+		// Get error rates by code using total event count as denominator
 		rows, err := tx.QueryContext(ctx, `
-			WITH total AS (
-				SELECT COUNT(*)::float as total_count
+			WITH error_counts AS (
+				SELECT error->>'code' as error_code, COUNT(*) as code_count
+				FROM content_events
+				WHERE url = $1 
+					AND timestamp >= $2
+					AND type = 'CONTENT_ERROR'
+					AND error IS NOT NULL
+					AND error ? 'code'
+				GROUP BY error->>'code'
+			),
+			total AS (
+				SELECT COUNT(*) as total_count
 				FROM content_events 
 				WHERE url = $1 AND timestamp >= $2
 			)
 			SELECT 
-				error->>'code' as error_code,
-				COUNT(*)::float / NULLIF(total_count, 0) as error_rate
-			FROM content_events, total
-			WHERE url = $1 
-				AND timestamp >= $2
-				AND type = 'CONTENT_ERROR'
-				AND error IS NOT NULL
-				AND error->>'code' IS NOT NULL
-			GROUP BY error->>'code', total_count
+				error_code,
+				ROUND((code_count::float / NULLIF(total_count, 0))::numeric, 4)
+			FROM error_counts, total
+			WHERE total_count > 0
 		`, url, since)
 		if err != nil {
 			return err
