@@ -54,6 +54,19 @@ func (h *Handler) CreateContent(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (h *Handler) ListContent(w http.ResponseWriter, r *http.Request) {
+	list := &v1alpha1.ContentSourceList{
+		Items: make([]v1alpha1.ContentSource, 0),
+	}
+
+	// Return empty list for now - will be implemented with repository
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(list); err != nil {
+		http.Error(w, "error encoding response", http.StatusInternalServerError)
+		return
+	}
+}
+
 func (h *Handler) ReportEvents(w http.ResponseWriter, r *http.Request) {
 	var batch v1alpha1.ContentEventBatch
 	if err := json.NewDecoder(r.Body).Decode(&batch); err != nil {

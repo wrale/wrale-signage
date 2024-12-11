@@ -2,7 +2,6 @@ package http
 
 import (
 	"github.com/go-chi/chi/v5"
-	"net/http"
 )
 
 func NewRouter(h *Handler) chi.Router {
