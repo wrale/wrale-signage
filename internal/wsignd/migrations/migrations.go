@@ -19,7 +19,8 @@ var migrationFiles embed.FS
 
 var (
 	migrationFilePattern = regexp.MustCompile(`^(\d{3})_(.+)\.sql$`)
-	functionPattern     = regexp.MustCompile(`(?si)CREATE(?:\s+OR\s+REPLACE)?\s+FUNCTION.*?LANGUAGE`)
+	functionPattern      = regexp.MustCompile(`(?si)CREATE(?:\s+OR\s+REPLACE)?\s+FUNCTION.*?LANGUAGE`)
+	commentPattern      = regexp.MustCompile(`(?m)^--.*$|/\*(?s).*?\*/`)
 )
 
 // Migration represents a single database migration
@@ -152,35 +153,51 @@ func (m *Manager) getAppliedMigrations(ctx context.Context) (map[int]time.Time, 
 	return applied, rows.Err()
 }
 
+// cleanSQL removes comments and normalizes whitespace
+func (m *Manager) cleanSQL(sql string) string {
+	// Remove comments
+	sql = commentPattern.ReplaceAllString(sql, "")
+
+	// Normalize whitespace
+	lines := strings.Split(sql, "\n")
+	var cleaned []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			cleaned = append(cleaned, line)
+		}
+	}
+	return strings.Join(cleaned, "\n")
+}
+
 // splitStatements splits SQL into individual statements while preserving functions
 func (m *Manager) splitStatements(sql string) []string {
-	// Extract function definitions first
+	// Clean SQL first
+	sql = m.cleanSQL(sql)
+
+	// Extract function definitions
 	functions := functionPattern.FindAllString(sql, -1)
 	for i, fn := range functions {
 		sql = strings.Replace(sql, fn, fmt.Sprintf("--FUNCTION_%d--", i), 1)
 	}
 
-	// Split remaining SQL on semicolons
+	// Split on semicolons
 	statements := strings.Split(sql, ";")
 
-	// Restore function definitions
-	for i, statement := range statements {
-		statement = strings.TrimSpace(statement)
-		if statement == "" {
-			continue
-		}
-		for j, fn := range functions {
-			statement = strings.Replace(statement, fmt.Sprintf("--FUNCTION_%d--", j), fn, 1)
-		}
-		statements[i] = statement
-	}
-
-	// Remove empty statements
+	// Process each statement
 	var result []string
 	for _, stmt := range statements {
-		if strings.TrimSpace(stmt) != "" {
-			result = append(result, stmt)
+		stmt = strings.TrimSpace(stmt)
+		if stmt == "" {
+			continue
 		}
+
+		// Restore function definitions
+		for i, fn := range functions {
+			stmt = strings.Replace(stmt, fmt.Sprintf("--FUNCTION_%d--", i), fn, 1)
+		}
+
+		result = append(result, stmt)
 	}
 
 	return result
