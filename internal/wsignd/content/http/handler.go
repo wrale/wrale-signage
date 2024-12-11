@@ -71,6 +71,40 @@ func (h *Handler) ReportEvents(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
+func (h *Handler) GetURLHealth(w http.ResponseWriter, r *http.Request) {
+	url := chi.URLParam(r, "url")
+	if url == "" {
+		http.Error(w, "url parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	status, err := h.service.GetURLHealth(r.Context(), url)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(status)
+}
+
+func (h *Handler) GetURLMetrics(w http.ResponseWriter, r *http.Request) {
+	url := chi.URLParam(r, "url")
+	if url == "" {
+		http.Error(w, "url parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	metrics, err := h.service.GetURLMetrics(r.Context(), url)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(metrics)
+}
+
 func convertAPIEvents(apiEvents []v1alpha1.ContentEvent) []content.Event {
 	events := make([]content.Event, len(apiEvents))
 	for i, e := range apiEvents {
