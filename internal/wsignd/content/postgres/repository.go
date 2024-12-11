@@ -130,49 +130,46 @@ func (r *repository) GetURLMetrics(ctx context.Context, url string, since time.T
 			return err
 		}
 
-		// Extract and average metrics using proper JSONB path extraction
+		// Get average timing metrics using proper JSONB validation
 		err = tx.QueryRowContext(ctx, `
-			WITH load_metrics AS (
-				SELECT 
-					(CASE 
-						WHEN metrics ? 'loadTime' AND jsonb_typeof(metrics->'loadTime') = 'number'
-						THEN (metrics->>'loadTime')::numeric
-						ELSE NULL
-					END) as load_time,
-					(CASE 
-						WHEN metrics ? 'renderTime' AND jsonb_typeof(metrics->'renderTime') = 'number'
-						THEN (metrics->>'renderTime')::numeric
-						ELSE NULL
-					END) as render_time
-				FROM content_events 
+			WITH valid_events AS (
+				SELECT *
+				FROM content_events
 				WHERE url = $1 
 					AND timestamp >= $2
 					AND type = 'CONTENT_LOADED'
 					AND metrics IS NOT NULL
+					AND metrics ? 'loadTime'
+					AND metrics ? 'renderTime'
+					AND jsonb_typeof(metrics->'loadTime') = 'number'
+					AND jsonb_typeof(metrics->'renderTime') = 'number'
 			)
 			SELECT 
-				COALESCE(AVG(load_time), 0)::float8,
-				COALESCE(AVG(render_time), 0)::float8
-			FROM load_metrics
-			WHERE load_time IS NOT NULL 
-				OR render_time IS NOT NULL
+				COALESCE(AVG((metrics->>'loadTime')::numeric), 0)::float8,
+				COALESCE(AVG((metrics->>'renderTime')::numeric), 0)::float8
+			FROM valid_events
 		`, url, since).Scan(&metrics.AvgLoadTime, &metrics.AvgRenderTime)
 		if err != nil && err != sql.ErrNoRows {
 			return err
 		}
 
-		// Calculate error rates by code with proper precision
+		// Get error rates with proper CTE structure
 		rows, err := tx.QueryContext(ctx, `
-			WITH error_counts AS (
-				SELECT 
-					error->>'code' as error_code,
-					COUNT(*) as code_count
+			WITH valid_errors AS (
+				SELECT *
 				FROM content_events
 				WHERE url = $1 
 					AND timestamp >= $2
 					AND type = 'CONTENT_ERROR'
 					AND error IS NOT NULL
 					AND error ? 'code'
+					AND jsonb_typeof(error->'code') = 'string'
+			),
+			error_counts AS (
+				SELECT 
+					error->>'code' as error_code,
+					COUNT(*) as code_count
+				FROM valid_errors
 				GROUP BY error->>'code'
 			),
 			total AS (
@@ -182,10 +179,7 @@ func (r *repository) GetURLMetrics(ctx context.Context, url string, since time.T
 			)
 			SELECT 
 				error_code,
-				ROUND(
-					(code_count::numeric / NULLIF(total_count, 0)::numeric)::numeric,
-					4
-				)::float8
+				(code_count::numeric / NULLIF(total_count, 0)::numeric)::float8
 			FROM error_counts, total
 			WHERE total_count > 0
 		`, url, since)
