@@ -21,7 +21,8 @@ func (h *Handler) GetDisplay(w http.ResponseWriter, r *http.Request) {
 	var d *display.Display
 	var err error
 
-	if id, err := uuid.Parse(idStr); err == nil {
+	id, parseErr := uuid.Parse(idStr)
+	if parseErr == nil {
 		d, err = h.service.Get(r.Context(), id)
 	} else {
 		// Fallback to name lookup
