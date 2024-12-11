@@ -132,7 +132,7 @@ func setupRouter(cfg *config.Config, db *sql.DB, logger *slog.Logger) http.Handl
 
 	// Create display handler
 	displayHandler := displayhttp.NewHandler(displayService, activationService, logger)
-	r.Mount("/api/v1alpha1/displays", displayHandler.Router())
+	r.Mount("/", displayHandler.Router())
 
 	// Set up content service
 	contentRepo := contentpg.NewRepository(db)
