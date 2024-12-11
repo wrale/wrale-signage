@@ -95,9 +95,17 @@ the display, like "lobby-north" or "cafeteria-menu-1".`,
 	cmd.Flags().StringVar(&position, "position", "", "Position within zone (required)")
 	cmd.Flags().StringArrayVar(&labels, "label", nil, "Additional labels in key=value format")
 
-	cmd.MarkFlagRequired("site-id")
-	cmd.MarkFlagRequired("zone")
-	cmd.MarkFlagRequired("position")
+	// Mark required flags and check for errors
+	if err := cmd.MarkFlagRequired("site-id"); err != nil {
+		// This should only happen during development if a flag name is incorrect
+		panic(fmt.Sprintf("failed to mark site-id flag as required: %v", err))
+	}
+	if err := cmd.MarkFlagRequired("zone"); err != nil {
+		panic(fmt.Sprintf("failed to mark zone flag as required: %v", err))
+	}
+	if err := cmd.MarkFlagRequired("position"); err != nil {
+		panic(fmt.Sprintf("failed to mark position flag as required: %v", err))
+	}
 
 	return cmd
 }
