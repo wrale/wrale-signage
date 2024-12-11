@@ -15,7 +15,11 @@ func (c *Client) AddRedirectRule(ctx context.Context, rule *v1alpha1.RedirectRul
 	if err != nil {
 		return fmt.Errorf("failed to create redirect rule: %w", err)
 	}
-	resp.Body.Close()
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			err = fmt.Errorf("error closing response body: %v (original error: %w)", cerr, err)
+		}
+	}()
 	return nil
 }
 
@@ -51,7 +55,11 @@ func (c *Client) ListRedirectRules(ctx context.Context, filter *v1alpha1.RuleFil
 	if err != nil {
 		return nil, fmt.Errorf("failed to list redirect rules: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			err = fmt.Errorf("error closing response body: %v (original error: %w)", cerr, err)
+		}
+	}()
 
 	var rules []v1alpha1.RedirectRule
 	if err := json.NewDecoder(resp.Body).Decode(&rules); err != nil {
@@ -67,7 +75,11 @@ func (c *Client) UpdateRedirectRule(ctx context.Context, name string, update *v1
 	if err != nil {
 		return fmt.Errorf("failed to update redirect rule: %w", err)
 	}
-	resp.Body.Close()
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			err = fmt.Errorf("error closing response body: %v (original error: %w)", cerr, err)
+		}
+	}()
 	return nil
 }
 
@@ -77,7 +89,11 @@ func (c *Client) RemoveRedirectRule(ctx context.Context, name string) error {
 	if err != nil {
 		return fmt.Errorf("failed to delete redirect rule: %w", err)
 	}
-	resp.Body.Close()
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			err = fmt.Errorf("error closing response body: %v (original error: %w)", cerr, err)
+		}
+	}()
 	return nil
 }
 
@@ -92,6 +108,10 @@ func (c *Client) ReorderRedirectRule(ctx context.Context, name, position, relati
 	if err != nil {
 		return fmt.Errorf("failed to reorder redirect rule: %w", err)
 	}
-	resp.Body.Close()
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			err = fmt.Errorf("error closing response body: %v (original error: %w)", cerr, err)
+		}
+	}()
 	return nil
 }

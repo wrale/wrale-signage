@@ -57,9 +57,9 @@ func LoadConfig() (*Config, error) {
 	if err := viper.ReadInConfig(); err != nil {
 		// If the config file doesn't exist, create a default one
 		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
-			// Ensure directory exists
+			// Ensure directory exists with restricted permissions
 			configDir := filepath.Dir(configPath)
-			if err := os.MkdirAll(configDir, 0755); err != nil {
+			if err := os.MkdirAll(configDir, 0750); err != nil {
 				return nil, fmt.Errorf("error creating config directory: %w", err)
 			}
 
