@@ -1,47 +1,59 @@
-# Wrale Signage
+# Wrale Signage [ALPHA]
 
-Wrale Signage is an open-source digital signage management system designed for enterprise-scale deployments. It provides a simple yet powerful way to manage displays across multiple locations through a clean, domain-driven architecture.
+Wrale Signage aims to be an open-source digital signage management system with a focus on simplicity and reliability. Currently in early development.
 
-## Overview
+## Current Status
 
-The system enables:
-- Easy display setup using OAuth 2.0 Device Authorization Flow
-- Flexible content delivery with robust caching
-- Sophisticated content targeting based on location
-- Resilient operation during network issues
-- Simple administration through CLI and web interfaces
+Basic functionality is implemented:
+- Display registration and management via CLI
+- Content event tracking in PostgreSQL
+- Basic health monitoring
+- Web interface for display simulation
 
 ## Project Structure
 
-The project follows a domain-driven design approach with clean architecture principles:
-
 ```
 .
-├── api/                  # API definitions and types
-├── cmd/                  # Application entry points
-│   ├── wsignd/          # Server binary
-│   └── wsignctl/        # CLI tool
-├── internal/            # Private implementation
-│   ├── wsignd/         # Server implementation
-│   └── wsignctl/       # CLI implementation
-└── pkg/                # Public packages
+├── api/                  # API types
+├── cmd/                  # Binaries
+│   ├── wsignd/          # Server
+│   └── wsignctl/        # CLI
+├── internal/            # Implementation
+└── web/                # Display interface
 ```
 
 ## Development
 
 ### Prerequisites
 
-- Go 1.21 or later
-- PostgreSQL 12 or later
-- Redis (optional, for caching)
+- Go 1.21+
+- PostgreSQL 14+
+- Node.js 18+ (for web interface)
+- Docker (for development database)
 
-### Building
+### Quick Start
 
+1. Start development database:
 ```bash
-go build ./cmd/wsignd     # Build server
-go build ./cmd/wsignctl   # Build CLI tool
+make test-deps
 ```
+
+2. Build binaries:
+```bash
+make build  # Creates bin/wsignd and bin/wsignctl
+```
+
+3. Run tests:
+```bash
+make test
+```
+
+See `/docs/demos/0001_basic_setup_and_content.md` for complete setup guide.
+
+## Contributing
+
+Project is in early stages. APIs and interfaces may change significantly.
 
 ## License
 
-Apache License 2.0 - See LICENSE file for details.
+Apache License 2.0
