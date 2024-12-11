@@ -21,8 +21,8 @@ import (
 	contenthttp "github.com/wrale/wrale-signage/internal/wsignd/content/http"
 	contentpg "github.com/wrale/wrale-signage/internal/wsignd/content/postgres"
 	"github.com/wrale/wrale-signage/internal/wsignd/database"
-	"github.com/wrale/wrale-signage/internal/wsignd/display"
 	"github.com/wrale/wrale-signage/internal/wsignd/display/activation"
+	activationpg "github.com/wrale/wrale-signage/internal/wsignd/display/activation/postgres"
 	displayhttp "github.com/wrale/wrale-signage/internal/wsignd/display/http"
 	displaypg "github.com/wrale/wrale-signage/internal/wsignd/display/postgres"
 	"github.com/wrale/wrale-signage/internal/wsignd/display/service"
@@ -33,7 +33,7 @@ func main() {
 	configPath := flag.String("config", "", "path to config file")
 	flag.Parse()
 
-	// Initialize structured logging with JSON format for easier parsing
+	// Initialize structured logging
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
 
@@ -66,7 +66,7 @@ func main() {
 		cfg.Database.SSLMode,
 	)
 
-	// Establish database connection with proper connection pooling and run migrations
+	// Setup database and run migrations
 	db, err := database.SetupDatabase(connStr, 5, time.Second)
 	if err != nil {
 		logger.Error("failed to setup database", "error", err)
@@ -74,7 +74,7 @@ func main() {
 	}
 	defer db.Close()
 
-	// Create HTTP server with timeouts and configuration
+	// Create HTTP server
 	server := &http.Server{
 		Addr:         fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
 		Handler:      setupRouter(cfg, db, logger),
@@ -83,14 +83,13 @@ func main() {
 		IdleTimeout:  cfg.Server.IdleTimeout,
 	}
 
-	// Start the server in a goroutine to allow for graceful shutdown
+	// Start server
 	go func() {
 		logger.Info("starting server",
 			"host", cfg.Server.Host,
 			"port", cfg.Server.Port,
 		)
 
-		var err error
 		if cfg.Server.TLSCert != "" && cfg.Server.TLSKey != "" {
 			err = server.ListenAndServeTLS(cfg.Server.TLSCert, cfg.Server.TLSKey)
 		} else {
@@ -102,19 +101,16 @@ func main() {
 		}
 	}()
 
-	// Set up graceful shutdown on interrupt signals
+	// Handle shutdown
 	shutdown := make(chan os.Signal, 1)
 	signal.Notify(shutdown, os.Interrupt, syscall.SIGTERM)
 
-	// Wait for interrupt signal
 	<-shutdown
 	logger.Info("shutting down server...")
 
-	// Create shutdown context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Attempt graceful shutdown
 	if err := server.Shutdown(ctx); err != nil {
 		logger.Error("server shutdown error", "error", err)
 	}
@@ -122,45 +118,37 @@ func main() {
 	logger.Info("server stopped")
 }
 
-// setupRouter creates and configures the HTTP router with all application routes
 func setupRouter(cfg *config.Config, db *sql.DB, logger *slog.Logger) http.Handler {
 	r := chi.NewRouter()
 
-	// Set up display service dependencies
+	// Set up display service
 	displayRepo := displaypg.NewRepository(db, logger)
-	displayPublisher := &noopEventPublisher{} // TODO: Implement real event publisher
+	displayPublisher := service.NewNoopEventPublisher()
 	displayService := service.New(displayRepo, displayPublisher, logger)
 
 	// Set up activation service
-	activationRepo := activation.NewRepository(db, logger)
+	activationRepo := activationpg.NewRepository(db, logger)
 	activationService := activation.NewService(activationRepo)
 
-	// Create and mount display handlers
+	// Create display handler
 	displayHandler := displayhttp.NewHandler(displayService, activationService, logger)
 	r.Mount("/api/v1alpha1/displays", displayHandler.Router())
 
-	// Set up content service dependencies
+	// Set up content service
 	contentRepo := contentpg.NewRepository(db)
-	contentProcessor := &noopEventProcessor{}  // TODO: Implement real event processor
-	contentMetrics := &noopMetricsAggregator{} // TODO: Implement real metrics
-	contentMonitor := &noopHealthMonitor{}     // TODO: Implement real monitor
+	contentProcessor := &noopEventProcessor{}
+	contentMetrics := &noopMetricsAggregator{}
+	contentMonitor := &noopHealthMonitor{}
 	contentService := content.NewService(contentRepo, contentProcessor, contentMetrics, contentMonitor)
 
-	// Create and mount content handlers
+	// Create content handler
 	contentHandler := contenthttp.NewHandler(contentService)
 	r.Mount("/api/v1alpha1/content", contentHandler.Router())
 
 	return r
 }
 
-// noopEventPublisher is a temporary implementation of display.EventPublisher
-type noopEventPublisher struct{}
-
-func (p *noopEventPublisher) Publish(ctx context.Context, event display.Event) error {
-	return nil
-}
-
-// Temporary no-op implementations for content infrastructure
+// Content no-op implementations
 type noopEventProcessor struct{}
 
 func (p *noopEventProcessor) ProcessEvents(ctx context.Context, batch content.EventBatch) error {
@@ -172,7 +160,6 @@ type noopMetricsAggregator struct{}
 func (m *noopMetricsAggregator) RecordMetrics(ctx context.Context, event content.Event) error {
 	return nil
 }
-
 func (m *noopMetricsAggregator) GetURLMetrics(ctx context.Context, url string) (*content.URLMetrics, error) {
 	return &content.URLMetrics{URL: url}, nil
 }
@@ -182,7 +169,6 @@ type noopHealthMonitor struct{}
 func (h *noopHealthMonitor) CheckHealth(ctx context.Context, url string) (*content.HealthStatus, error) {
 	return &content.HealthStatus{URL: url, Healthy: true}, nil
 }
-
 func (h *noopHealthMonitor) GetHealthHistory(ctx context.Context, url string) ([]content.HealthStatus, error) {
 	return []content.HealthStatus{}, nil
 }
