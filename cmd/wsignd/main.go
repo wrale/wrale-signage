@@ -17,6 +17,8 @@ import (
 	_ "github.com/lib/pq"
 
 	"github.com/wrale/wrale-signage/internal/wsignd/config"
+	"github.com/wrale/wrale-signage/internal/wsignd/content"
+	contenthttp "github.com/wrale/wrale-signage/internal/wsignd/content/http"
 	"github.com/wrale/wrale-signage/internal/wsignd/database"
 	"github.com/wrale/wrale-signage/internal/wsignd/display"
 	displayhttp "github.com/wrale/wrale-signage/internal/wsignd/display/http"
@@ -123,13 +125,24 @@ func setupRouter(cfg *config.Config, db *sql.DB, logger *slog.Logger) http.Handl
 	r := chi.NewRouter()
 
 	// Set up display service dependencies
-	repo := postgres.NewRepository(db, logger)
-	publisher := &noopEventPublisher{} // TODO: Implement real event publisher
-	service := service.New(repo, publisher, logger)
+	displayRepo := postgres.NewRepository(db, logger)
+	displayPublisher := &noopEventPublisher{} // TODO: Implement real event publisher
+	displayService := service.New(displayRepo, displayPublisher, logger)
 
 	// Create and mount display handlers
-	displayHandler := displayhttp.NewHandler(service, logger)
-	r.Mount("/", displayHandler.Router())
+	displayHandler := displayhttp.NewHandler(displayService, logger)
+	r.Mount("/api/v1alpha1/displays", displayHandler.Router())
+
+	// Set up content service dependencies
+	contentRepo := content.NewPostgresRepository(db, logger)
+	contentProcessor := content.NewEventProcessor(logger)
+	contentMetrics := content.NewMetricsAggregator(logger)
+	contentMonitor := content.NewHealthMonitor(logger)
+	contentService := content.NewService(contentRepo, contentProcessor, contentMetrics, contentMonitor)
+
+	// Create and mount content handlers
+	contentHandler := contenthttp.NewHandler(contentService)
+	r.Mount("/api/v1alpha1/content", contentHandler.Router())
 
 	return r
 }
