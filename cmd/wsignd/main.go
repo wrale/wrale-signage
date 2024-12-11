@@ -15,6 +15,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	_ "github.com/lib/pq"
+	"github.com/rs/zerolog"
 
 	"github.com/wrale/wrale-signage/internal/wsignd/config"
 	"github.com/wrale/wrale-signage/internal/wsignd/content"
@@ -36,6 +37,9 @@ func main() {
 	// Initialize structured logging
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
+
+	// Create zerolog logger for content handler
+	zlogger := zerolog.New(os.Stdout).With().Timestamp().Logger()
 
 	// Load configuration
 	var cfg *config.Config
@@ -77,7 +81,7 @@ func main() {
 	// Create HTTP server
 	server := &http.Server{
 		Addr:         fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
-		Handler:      setupRouter(cfg, db, logger),
+		Handler:      setupRouter(cfg, db, logger, zlogger),
 		ReadTimeout:  cfg.Server.ReadTimeout,
 		WriteTimeout: cfg.Server.WriteTimeout,
 		IdleTimeout:  cfg.Server.IdleTimeout,
@@ -118,7 +122,7 @@ func main() {
 	logger.Info("server stopped")
 }
 
-func setupRouter(cfg *config.Config, db *sql.DB, logger *slog.Logger) http.Handler {
+func setupRouter(cfg *config.Config, db *sql.DB, logger *slog.Logger, zlogger zerolog.Logger) http.Handler {
 	r := chi.NewRouter()
 
 	// Set up display service
@@ -141,8 +145,8 @@ func setupRouter(cfg *config.Config, db *sql.DB, logger *slog.Logger) http.Handl
 	contentMonitor := &noopHealthMonitor{}
 	contentService := content.NewService(contentRepo, contentProcessor, contentMetrics, contentMonitor)
 
-	// Create content handler
-	contentHandler := contenthttp.NewHandler(contentService, logger.With().Str("component", "content").Logger())
+	// Create content handler with zerolog logger
+	contentHandler := contenthttp.NewHandler(contentService, zlogger)
 	r.Mount("/api/v1alpha1/content", contentHandler.Router())
 
 	return r
