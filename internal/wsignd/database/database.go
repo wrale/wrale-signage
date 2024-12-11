@@ -46,13 +46,17 @@ func SetupDatabase(connStr string, maxRetries int, backoff time.Duration) (*sql.
 				cancel()
 				// Run migrations
 				if err := RunMigrations(db); err != nil {
-					db.Close()
+					if closeErr := db.Close(); closeErr != nil {
+						return nil, fmt.Errorf("migration failed (close error: %v): %w", closeErr, err)
+					}
 					return nil, fmt.Errorf("migration failed: %w", err)
 				}
 				return db, nil
 			}
 			cancel()
-			db.Close()
+			if closeErr := db.Close(); closeErr != nil {
+				return nil, fmt.Errorf("connection verification failed (close error: %v): %w", closeErr, err)
+			}
 		}
 
 		// Wait before retry
