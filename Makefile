@@ -63,7 +63,7 @@ COMPOSE_DEV_FILE=docker-compose.dev.yml
 .PHONY: all clean test coverage lint sec-check vet fmt help install-tools run dev deps
 .PHONY: build build-server build-client run-server run-client
 .PHONY: docker-build docker-push docker-run docker-stop compose-up compose-down
-.PHONY: build-images push-images x y verify-deps
+.PHONY: build-images push-images x y z verify-deps
 
 help: ## Display available commands
 	@echo "Available Commands:"
@@ -191,6 +191,10 @@ x: ## Copy project tree structure to clipboard (ignoring git files)
 y: ## Run all checks and copy output to clipboard while displaying
 	@echo "==> Running all checks and copying output..."
 	@{ make all 2>&1; } | $(COPY_TO_CLIPBOARD)
+
+z: ## Copy 4 most recent git log messages to clipboard while displaying
+	@echo "==> Copying 4 most recent git log messages and copying output..."
+	@{ git log -n4 2>&1; } | $(COPY_TO_CLIPBOARD)
 
 # Single container targets
 docker-run-server: ## Run server container
