@@ -1,3 +1,4 @@
+// Package http implements the HTTP handlers for the display service
 package http
 
 import (
@@ -18,34 +19,6 @@ func (h *Handler) RegisterDisplay(w http.ResponseWriter, r *http.Request) {
 		"remoteAddr", r.RemoteAddr,
 	)
 
-	// Log request body for debugging
-	var body struct {
-		Name     string   `json:"name"`
-		Location struct{} `json:"location"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		h.logger.Error("failed to decode request body",
-			"error", err,
-			"requestID", reqID,
-		)
-		h.writeError(w, werrors.NewError("INVALID_INPUT", "invalid request body", "RegisterDisplay", err), http.StatusBadRequest)
-		return
-	}
-	h.logger.Debug("received registration request",
-		"requestID", reqID,
-		"name", body.Name,
-		"body", body,
-	)
-
-	// Re-decode for actual processing
-	if err := r.Body.Close(); err != nil {
-		h.logger.Error("failed to close request body",
-			"error", err,
-			"requestID", reqID,
-		)
-		h.writeError(w, werrors.NewError("INTERNAL", "internal server error", "RegisterDisplay", err), http.StatusInternalServerError)
-		return
-	}
 	var req v1alpha1.DisplayRegistrationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.logger.Error("failed to decode registration request",
@@ -55,6 +28,7 @@ func (h *Handler) RegisterDisplay(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, werrors.NewError("INVALID_INPUT", "invalid request body", "RegisterDisplay", err), http.StatusBadRequest)
 		return
 	}
+	defer r.Body.Close()
 
 	// Validate request fields
 	if req.Name == "" {
@@ -90,7 +64,19 @@ func (h *Handler) RegisterDisplay(w http.ResponseWriter, r *http.Request) {
 			"name", req.Name,
 			"location", location,
 		)
-		h.writeError(w, err, http.StatusInternalServerError)
+
+		// Map domain errors to HTTP status codes
+		var status int
+		switch err.(type) {
+		case display.ErrExists:
+			status = http.StatusConflict
+		case display.ErrInvalidName, display.ErrInvalidLocation:
+			status = http.StatusBadRequest
+		default:
+			status = http.StatusInternalServerError
+		}
+
+		h.writeError(w, err, status)
 		return
 	}
 
