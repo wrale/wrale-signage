@@ -12,7 +12,7 @@ type Content struct {
 	Name             string            `json:"name"`
 	URL              string            `json:"url"`
 	Type             string            `json:"type"`
-	PlaybackDuration time.Duration    `json:"playbackDuration"`
+	PlaybackDuration time.Duration     `json:"playbackDuration"`
 	Properties       map[string]string `json:"properties,omitempty"`
 }
 
