@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 
@@ -33,7 +34,7 @@ func NewHandler(service display.Service, logger *slog.Logger) *Handler {
 	return h
 }
 
-// writeError writes a JSON error response
+// writeError writes a JSON error response, falling back to plain text if JSON encoding fails
 func (h *Handler) writeError(w http.ResponseWriter, err error, defaultStatus int) {
 	var werr *werrors.Error
 	if errors.As(err, &werr) {
@@ -49,10 +50,20 @@ func (h *Handler) writeError(w http.ResponseWriter, err error, defaultStatus int
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
-		json.NewEncoder(w).Encode(map[string]string{
+
+		response := map[string]string{
 			"code":    werr.Code,
 			"message": werr.Message,
-		})
+		}
+
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			// Log JSON encoding error and fall back to plain text
+			h.logger.Error("failed to encode error response",
+				"error", err,
+				"original_error", werr,
+			)
+			http.Error(w, fmt.Sprintf("%s: %s", werr.Code, werr.Message), status)
+		}
 		return
 	}
 
