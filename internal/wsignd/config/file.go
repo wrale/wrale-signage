@@ -78,6 +78,22 @@ func validateConfigPath(path string) (string, error) {
 	return realPath, nil
 }
 
+// safeReadFile reads a file that has been validated as safe
+// This function should only be used with paths that have passed through validateConfigPath
+func safeReadFile(path string) ([]byte, error) {
+	// Verify the file exists and is a regular file
+	fi, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("error accessing config file: %w", err)
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("config path must be a regular file")
+	}
+
+	// #nosec G304 -- path has been validated by validateConfigPath
+	return os.ReadFile(path)
+}
+
 // LoadFile loads configuration from a YAML file
 func LoadFile(path string) (*Config, error) {
 	// Validate and resolve the config path
@@ -86,19 +102,10 @@ func LoadFile(path string) (*Config, error) {
 		return nil, fmt.Errorf("invalid config path: %w", err)
 	}
 
-	// Verify the file exists and is a regular file
-	fi, err := os.Stat(validPath)
+	// Read the validated config file
+	data, err := safeReadFile(validPath)
 	if err != nil {
-		return nil, fmt.Errorf("error accessing config file: %w", err)
-	}
-	if !fi.Mode().IsRegular() {
-		return nil, fmt.Errorf("config path must be a regular file")
-	}
-
-	// Read and parse the config file
-	data, err := os.ReadFile(validPath)
-	if err != nil {
-		return nil, fmt.Errorf("error reading config file: %w", err)
+		return nil, err
 	}
 
 	var cfg Config

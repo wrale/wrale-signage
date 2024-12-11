@@ -16,24 +16,24 @@ type Config struct {
 // ServerConfig holds HTTP server settings
 type ServerConfig struct {
 	Host         string        `yaml:"host"`
-	Port         int          `yaml:"port"`
+	Port         int           `yaml:"port"`
 	ReadTimeout  time.Duration `yaml:"readTimeout"`
 	WriteTimeout time.Duration `yaml:"writeTimeout"`
 	IdleTimeout  time.Duration `yaml:"idleTimeout"`
-	TLSCert      string       `yaml:"tlsCert"`
-	TLSKey       string       `yaml:"tlsKey"`
+	TLSCert      string        `yaml:"tlsCert"`
+	TLSKey       string        `yaml:"tlsKey"`
 }
 
 // DatabaseConfig holds database connection settings
 type DatabaseConfig struct {
 	Host            string        `yaml:"host"`
-	Port            int          `yaml:"port"`
-	Name            string       `yaml:"name"`
-	User            string       `yaml:"user"`
-	Password        string       `yaml:"password"`
-	SSLMode         string       `yaml:"sslmode"`
-	MaxOpenConns    int          `yaml:"maxOpenConns"`
-	MaxIdleConns    int          `yaml:"maxIdleConns"`
+	Port            int           `yaml:"port"`
+	Name            string        `yaml:"name"`
+	User            string        `yaml:"user"`
+	Password        string        `yaml:"password"`
+	SSLMode         string        `yaml:"sslmode"`
+	MaxOpenConns    int           `yaml:"maxOpenConns"`
+	MaxIdleConns    int           `yaml:"maxIdleConns"`
 	ConnMaxLifetime time.Duration `yaml:"connMaxLifetime"`
 }
 
