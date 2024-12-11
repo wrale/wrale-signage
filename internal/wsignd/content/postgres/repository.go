@@ -120,7 +120,6 @@ func (r *repository) GetURLMetrics(ctx context.Context, url string, since time.T
 		}
 
 		// Get last seen timestamp
-		var lastSeen sql.NullFloat64
 		err = tx.QueryRowContext(ctx, `
 			SELECT EXTRACT(EPOCH FROM MAX(timestamp))::bigint
 			FROM content_events 
