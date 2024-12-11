@@ -2,16 +2,26 @@ package content
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/wrale/wrale-signage/api/types/v1alpha1"
 )
 
 // Service defines the content service interface
 type Service interface {
+	CreateContent(ctx context.Context, content *v1alpha1.ContentSource) error
 	ReportEvents(ctx context.Context, batch EventBatch) error
 	GetURLHealth(ctx context.Context, url string) (*HealthStatus, error)
 	GetURLMetrics(ctx context.Context, url string) (*URLMetrics, error)
 	ValidateContent(ctx context.Context, url string) error
+}
+
+type Repository interface {
+	CreateContent(ctx context.Context, content *v1alpha1.ContentSource) error
+	SaveEvent(ctx context.Context, event Event) error
+	GetURLMetrics(ctx context.Context, url string, since time.Time) (*URLMetrics, error)
+	GetDisplayEvents(ctx context.Context, displayID uuid.UUID, since time.Time) ([]Event, error)
 }
 
 type EventProcessor interface {

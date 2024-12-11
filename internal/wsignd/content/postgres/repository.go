@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/wrale/wrale-signage/api/types/v1alpha1"
 	"github.com/wrale/wrale-signage/internal/wsignd/content"
 	"github.com/wrale/wrale-signage/internal/wsignd/database"
 )
@@ -17,6 +18,49 @@ type repository struct {
 
 func NewRepository(db *sql.DB) *repository {
 	return &repository{db: db}
+}
+
+func (r *repository) CreateContent(ctx context.Context, content *v1alpha1.ContentSource) error {
+	const op = "ContentRepository.CreateContent"
+
+	err := database.RunInTx(ctx, r.db, nil, func(tx *database.Tx) error {
+		props, err := json.Marshal(content.Spec.Properties)
+		if err != nil {
+			return err
+		}
+
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO content_sources (
+				name, url, type, properties, 
+				last_validated, is_healthy, version,
+				playback_duration
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			ON CONFLICT (name) DO UPDATE SET
+				url = EXCLUDED.url,
+				type = EXCLUDED.type,
+				properties = EXCLUDED.properties,
+				last_validated = EXCLUDED.last_validated,
+				is_healthy = EXCLUDED.is_healthy,
+				version = EXCLUDED.version + 1,
+				playback_duration = EXCLUDED.playback_duration
+		`,
+			content.ObjectMeta.Name,
+			content.Spec.URL,
+			content.Spec.Type,
+			props,
+			content.Status.LastValidated,
+			content.Status.IsHealthy,
+			content.Status.Version,
+			content.Spec.PlaybackDuration,
+		)
+		return err
+	})
+
+	if err != nil {
+		return database.MapError(err, op)
+	}
+
+	return nil
 }
 
 func (r *repository) SaveEvent(ctx context.Context, event content.Event) error {

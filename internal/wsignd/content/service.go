@@ -3,20 +3,43 @@ package content
 import (
 	"context"
 	"time"
+
+	"github.com/wrale/wrale-signage/api/types/v1alpha1"
 )
 
 type contentService struct {
+	repo      Repository
 	processor EventProcessor
 	metrics   MetricsAggregator
 	monitor   HealthMonitor
 }
 
-func NewService(processor EventProcessor, metrics MetricsAggregator, monitor HealthMonitor) Service {
+func NewService(repo Repository, processor EventProcessor, metrics MetricsAggregator, monitor HealthMonitor) Service {
 	return &contentService{
+		repo:      repo,
 		processor: processor,
 		metrics:   metrics,
 		monitor:   monitor,
 	}
+}
+
+func (s *contentService) CreateContent(ctx context.Context, content *v1alpha1.ContentSource) error {
+	if err := content.Spec.Validate(); err != nil {
+		return err
+	}
+
+	// Validate URL is accessible
+	if err := s.ValidateContent(ctx, content.Spec.URL); err != nil {
+		return err
+	}
+
+	// Update status fields
+	content.Status.LastValidated = time.Now()
+	content.Status.IsHealthy = true
+	content.Status.Version = 1
+
+	// Store in repository
+	return s.repo.CreateContent(ctx, content)
 }
 
 func (s *contentService) ReportEvents(ctx context.Context, batch EventBatch) error {
