@@ -13,11 +13,17 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/wrale/wrale-signage/api/types/v1alpha1"
 	"github.com/wrale/wrale-signage/internal/wsignd/content"
 )
 
 type mockService struct {
 	mock.Mock
+}
+
+func (m *mockService) CreateContent(ctx context.Context, content *v1alpha1.ContentSource) error {
+	args := m.Called(ctx, content)
+	return args.Error(0)
 }
 
 func (m *mockService) ReportEvents(ctx context.Context, batch content.EventBatch) error {
@@ -70,6 +76,66 @@ func matchEventBatch(expected content.EventBatch) interface{} {
 		}
 		return true
 	})
+}
+
+func TestCreateContent(t *testing.T) {
+	tests := []struct {
+		name         string
+		content      *v1alpha1.ContentSource
+		validateErr  error
+		createErr    error
+		expectedCode int
+	}{
+		{
+			name: "successful_create",
+			content: &v1alpha1.ContentSource{
+				ObjectMeta: v1alpha1.ObjectMeta{
+					Name: "test-content",
+				},
+				Spec: v1alpha1.ContentSourceSpec{
+					URL:  "https://example.com/content",
+					Type: "static-page",
+				},
+			},
+			validateErr:  nil,
+			createErr:    nil,
+			expectedCode: http.StatusCreated,
+		},
+		{
+			name:         "invalid_request",
+			content:      nil,
+			expectedCode: http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockSvc := new(mockService)
+			if tt.content != nil {
+				mockSvc.On("ValidateContent", mock.Anything, tt.content.Spec.URL).Return(tt.validateErr)
+				if tt.validateErr == nil {
+					mockSvc.On("CreateContent", mock.Anything, mock.MatchedBy(func(c *v1alpha1.ContentSource) bool {
+						return c.ObjectMeta.Name == tt.content.ObjectMeta.Name &&
+							c.Spec.URL == tt.content.Spec.URL
+					})).Return(tt.createErr)
+				}
+			}
+
+			handler := NewHandler(mockSvc)
+
+			var body []byte
+			if tt.content != nil {
+				body, _ = json.Marshal(tt.content)
+			}
+
+			req := httptest.NewRequest("POST", "/content", bytes.NewReader(body))
+			w := httptest.NewRecorder()
+
+			handler.CreateContent(w, req)
+			assert.Equal(t, tt.expectedCode, w.Code)
+			mockSvc.AssertExpectations(t)
+		})
+	}
 }
 
 func TestReportEvents(t *testing.T) {
