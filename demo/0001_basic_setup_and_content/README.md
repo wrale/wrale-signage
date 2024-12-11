@@ -59,13 +59,15 @@ TODO: Pick one of site-id/zone-id (OR) site/zone. I like the second one better.
 
 1. Add test content:
 ```bash
-./bin/wsignctl content add \
+./bin/wsignctl content add welcome \
   --path demo/0001_basic_setup_and_content/content/welcome.html \
-  --duration 10s
-  
-./bin/wsignctl content add \
+  --duration 10s \
+  --config configs/wsignctl.yaml
+
+./bin/wsignctl content add news \
   --path demo/0001_basic_setup_and_content/content/news.html \
-  --duration 15s
+  --duration 15s \
+  --config configs/wsignctl.yaml
 ```
 
 2. Create content sequence:
