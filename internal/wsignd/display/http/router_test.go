@@ -92,7 +92,7 @@ func TestRouterMiddleware(t *testing.T) {
 
 	t.Run("recovers from panic", func(t *testing.T) {
 		router := chi.NewRouter()
-		router.Use(chi.Recoverer)
+		router.Use(middleware.Recoverer)
 		router.Get("/test", func(w http.ResponseWriter, r *http.Request) {
 			panic("test panic")
 		})
