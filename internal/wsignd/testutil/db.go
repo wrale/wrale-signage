@@ -2,7 +2,6 @@ package testutil
 
 import (
 	"database/sql"
-	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -49,9 +48,9 @@ func SetupTestDB(t *testing.T) (*sql.DB, func()) {
 	require.NoError(t, err, "Failed to connect to test database after %d attempts", maxRetries)
 
 	// Ensure we have our test database
-	_, err = db.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS wrale_test"))
+	_, err = db.Exec("DROP DATABASE IF EXISTS wrale_test")
 	require.NoError(t, err)
-	_, err = db.Exec(fmt.Sprintf("CREATE DATABASE wrale_test"))
+	_, err = db.Exec("CREATE DATABASE wrale_test")
 	require.NoError(t, err)
 
 	// Reconnect to test database
