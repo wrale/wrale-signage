@@ -22,7 +22,6 @@ import (
 	displayhttp "github.com/wrale/wrale-signage/internal/wsignd/display/http"
 	"github.com/wrale/wrale-signage/internal/wsignd/display/postgres"
 	"github.com/wrale/wrale-signage/internal/wsignd/display/service"
-	"github.com/wrale/wrale-signage/internal/wsignd/migrations"
 )
 
 func main() {
