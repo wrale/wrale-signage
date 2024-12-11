@@ -20,7 +20,7 @@ var migrationFiles embed.FS
 var (
 	migrationFilePattern = regexp.MustCompile(`^(\d{3})_(.+)\.sql$`)
 	functionPattern      = regexp.MustCompile(`(?si)CREATE(?:\s+OR\s+REPLACE)?\s+FUNCTION.*?LANGUAGE`)
-	commentPattern      = regexp.MustCompile(`(?m)^--.*$|/\*(?s).*?\*/`)
+	commentPattern       = regexp.MustCompile(`(?m)^--.*$|/\*(?s).*?\*/`)
 )
 
 // Migration represents a single database migration
@@ -73,7 +73,7 @@ func (m *Manager) LoadMigrations() ([]Migration, error) {
 		migrations = append(migrations, Migration{
 			Version:     version,
 			Description: matches[2],
-			Up:         string(content),
+			Up:          string(content),
 		})
 	}
 

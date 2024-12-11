@@ -1,6 +1,6 @@
 -- Migration: 002
 -- Description: Create content events table
--- Version: 1
+-- Version: 2
 
 -- Up Migration
 CREATE TABLE content_events (
