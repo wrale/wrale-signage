@@ -37,15 +37,20 @@ func newListCommand() *cobra.Command {
 			// Table output
 			fmt.Fprintln(cmd.OutOrStdout(), "\nContent Sources:")
 			fmt.Fprintln(cmd.OutOrStdout(), strings.Repeat("-", 80))
-			fmt.Fprintf(cmd.OutOrStdout(), "%-20s %-10s %-20s %s\n", "NAME", "TYPE", "DURATION", "PATH")
+			fmt.Fprintf(cmd.OutOrStdout(), "%-20s %-10s %-15s %s\n", "NAME", "TYPE", "DURATION", "URL")
 			fmt.Fprintln(cmd.OutOrStdout(), strings.Repeat("-", 80))
 
 			for _, c := range content {
-				fmt.Fprintf(cmd.OutOrStdout(), "%-20s %-10s %-20s %s\n",
-					c.Name,
-					c.Type,
-					c.Duration,
-					c.Path,
+				duration := c.Spec.PlaybackDuration.String()
+				if c.Spec.PlaybackDuration == 0 {
+					duration = "auto"
+				}
+
+				fmt.Fprintf(cmd.OutOrStdout(), "%-20s %-10s %-15s %s\n",
+					c.ObjectMeta.Name,
+					c.Spec.Type,
+					duration,
+					c.Spec.URL,
 				)
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), strings.Repeat("-", 80))
