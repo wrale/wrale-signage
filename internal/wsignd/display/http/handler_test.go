@@ -33,6 +33,14 @@ func (m *mockService) Get(ctx context.Context, id uuid.UUID) (*display.Display, 
 	return args.Get(0).(*display.Display), args.Error(1)
 }
 
+func (m *mockService) GetByName(ctx context.Context, name string) (*display.Display, error) {
+	args := m.Called(ctx, name)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*display.Display), args.Error(1)
+}
+
 func (m *mockService) List(ctx context.Context, filter display.DisplayFilter) ([]*display.Display, error) {
 	args := m.Called(ctx, filter)
 	return args.Get(0).([]*display.Display), args.Error(1)

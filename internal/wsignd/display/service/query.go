@@ -25,6 +25,21 @@ func (s *Service) Get(ctx context.Context, id uuid.UUID) (*display.Display, erro
 	return d, nil
 }
 
+// GetByName retrieves a display by name
+func (s *Service) GetByName(ctx context.Context, name string) (*display.Display, error) {
+	const op = "DisplayService.GetByName"
+
+	d, err := s.repo.FindByName(ctx, name)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return nil, errors.NewError("NOT_FOUND", fmt.Sprintf("Display not found: %s", name), op, err)
+		}
+		return nil, errors.NewError("LOOKUP_FAILED", "Failed to retrieve display", op, err)
+	}
+
+	return d, nil
+}
+
 // List retrieves displays matching the filter
 func (s *Service) List(ctx context.Context, filter display.DisplayFilter) ([]*display.Display, error) {
 	const op = "DisplayService.List"
