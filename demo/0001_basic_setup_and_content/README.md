@@ -44,7 +44,7 @@ npm run dev
 
 TODO: Pick one of site-id/zone-id (OR) site/zone. I like the second one better.
 
-1. Open web interface at http://localhost:5173
+1. Open web interface at http://localhost:3000
 2. Browser interface loads and displays registration code (e.g., "BLUE-FISH")
 3. In another terminal, use CLI to register display:
 ```bash
