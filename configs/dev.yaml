@@ -1,12 +1,12 @@
 server:
-  host: 0.0.0.0
+  host: localhost
   port: 8080
   readTimeout: 5s
   writeTimeout: 10s
   idleTimeout: 120s
 
 database:
-  host: postgres
+  host: localhost
   port: 5432
   name: wrale_test
   user: postgres
