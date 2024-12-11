@@ -6,12 +6,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/lib/pq"
 	werrors "github.com/wrale/wrale-signage/internal/wsignd/errors"
+	"github.com/wrale/wrale-signage/internal/wsignd/migrations"
 )
 
 // Tx wraps a database transaction with additional functionality
@@ -27,73 +26,12 @@ type TxOptions struct {
 	ReadOnly bool
 }
 
-// RunMigrations executes all SQL migrations in the specified directory
-func RunMigrations(db *sql.DB, migrationsPath string) error {
-	// Create migrations table if it doesn't exist
-	_, err := db.Exec(`
-		CREATE TABLE IF NOT EXISTS schema_migrations (
-			version TEXT PRIMARY KEY,
-			applied_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-		)
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to create migrations table: %w", err)
+// RunMigrations executes all SQL migrations using the migration manager
+func RunMigrations(db *sql.DB) error {
+	manager := migrations.NewManager(db)
+	if err := manager.ApplyMigrations(context.Background()); err != nil {
+		return fmt.Errorf("failed to apply migrations: %w", err)
 	}
-
-	// Get list of migration files
-	files, err := os.ReadDir(migrationsPath)
-	if err != nil {
-		return fmt.Errorf("failed to read migrations directory: %w", err)
-	}
-
-	// Execute each migration in transaction
-	for _, file := range files {
-		if !strings.HasSuffix(file.Name(), ".sql") {
-			continue
-		}
-
-		// Check if migration already applied
-		var exists bool
-		err = db.QueryRow("SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = $1)", file.Name()).Scan(&exists)
-		if err != nil {
-			return fmt.Errorf("failed to check migration status: %w", err)
-		}
-		if exists {
-			continue
-		}
-
-		// Read migration file
-		migrationPath := filepath.Join(migrationsPath, file.Name())
-		content, err := os.ReadFile(migrationPath)
-		if err != nil {
-			return fmt.Errorf("failed to read migration %s: %w", file.Name(), err)
-		}
-
-		// Execute migration in transaction
-		tx, err := db.Begin()
-		if err != nil {
-			return fmt.Errorf("failed to start transaction for migration %s: %w", file.Name(), err)
-		}
-
-		if _, err := tx.Exec(string(content)); err != nil {
-			if rbErr := tx.Rollback(); rbErr != nil {
-				return fmt.Errorf("failed to rollback migration %s: %v (original error: %w)", file.Name(), rbErr, err)
-			}
-			return fmt.Errorf("failed to execute migration %s: %w", file.Name(), err)
-		}
-
-		if _, err := tx.Exec("INSERT INTO schema_migrations (version) VALUES ($1)", file.Name()); err != nil {
-			if rbErr := tx.Rollback(); rbErr != nil {
-				return fmt.Errorf("failed to rollback migration record %s: %v (original error: %w)", file.Name(), rbErr, err)
-			}
-			return fmt.Errorf("failed to record migration %s: %w", file.Name(), err)
-		}
-
-		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("failed to commit migration %s: %w", file.Name(), err)
-		}
-	}
-
 	return nil
 }
 
