@@ -10,6 +10,7 @@ import (
 	"os"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -77,7 +78,7 @@ func TestRouterMiddleware(t *testing.T) {
 
 	t.Run("adds request id header", func(t *testing.T) {
 		router := chi.NewRouter()
-		router.Use(chi.RequestID)
+		router.Use(middleware.RequestID)
 		router.Get("/test", func(w http.ResponseWriter, r *http.Request) {})
 
 		req := httptest.NewRequest(http.MethodGet, "/test", nil)
