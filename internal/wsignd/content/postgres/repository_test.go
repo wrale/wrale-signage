@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"context"
-	"database/sql"
 	"testing"
 	"time"
 
@@ -10,28 +9,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/wrale/wrale-signage/internal/wsignd/content"
-	"github.com/wrale/wrale-signage/internal/wsignd/database"
+	"github.com/wrale/wrale-signage/internal/wsignd/testutil"
 )
 
-func setupTestDB(t *testing.T) (*sql.DB, func()) {
-	// Use test database configuration
-	db, err := sql.Open("postgres", "postgres://localhost:5432/wrale_test?sslmode=disable")
-	require.NoError(t, err)
-
-	// Run migrations
-	err = database.RunMigrations(db)
-	require.NoError(t, err)
-
-	return db, func() {
-		// Clean up test data
-		_, err := db.Exec("TRUNCATE content_events CASCADE")
-		require.NoError(t, err)
-		db.Close()
-	}
-}
-
 func TestSaveEvent(t *testing.T) {
-	db, cleanup := setupTestDB(t)
+	db, cleanup := testutil.SetupTestDB(t)
 	defer cleanup()
 
 	repo := NewRepository(db)
@@ -112,7 +94,7 @@ func TestSaveEvent(t *testing.T) {
 }
 
 func TestGetURLMetrics(t *testing.T) {
-	db, cleanup := setupTestDB(t)
+	db, cleanup := testutil.SetupTestDB(t)
 	defer cleanup()
 
 	repo := NewRepository(db)
