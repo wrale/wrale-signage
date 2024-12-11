@@ -63,12 +63,34 @@ COMPOSE_DEV_FILE=docker-compose.dev.yml
 .PHONY: all clean test coverage lint sec-check vet fmt help install-tools run dev deps
 .PHONY: build build-server build-client run-server run-client
 .PHONY: docker-build docker-push docker-run docker-stop compose-up compose-down
-.PHONY: build-images push-images x y z verify-deps
+.PHONY: build-images push-images x y z verify-deps test-deps test-clean
 
 help: ## Display available commands
 	@echo "Available Commands:"
 	@echo
 	@awk 'BEGIN {FS = ":.*##"; printf "  \033[36m%-20s\033[0m %s\n", "target", "description"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) }' $(MAKEFILE_LIST)
+
+test-deps: test-clean ## Start test database
+	@echo "==> Starting test database"
+	$(COMPOSE_ENGINE) up -d postgres
+	@echo "Waiting for PostgreSQL to be ready..."
+	@for i in $$(seq 1 30); do \
+		if $(COMPOSE_ENGINE) exec -T postgres pg_isready -U postgres >/dev/null 2>&1; then \
+			echo "PostgreSQL is ready"; \
+			break; \
+		fi; \
+		if [ $$i -eq 30 ]; then \
+			echo "Timeout waiting for PostgreSQL"; \
+			exit 1; \
+		fi; \
+		echo "Waiting for PostgreSQL... $$i/30"; \
+		sleep 1; \
+	done
+
+test-clean: ## Stop test database and cleanup
+	@echo "==> Cleaning test environment"
+	-$(COMPOSE_ENGINE) rm -f -s -v postgres 2>/dev/null || true
+	-rm -rf .test.* 2>/dev/null || true
 
 $(BINARY_OUTPUT_DIR):
 	mkdir -p $(BINARY_OUTPUT_DIR)
@@ -76,7 +98,7 @@ $(BINARY_OUTPUT_DIR):
 $(TEST_OUTPUT_DIR):
 	mkdir -p $(TEST_OUTPUT_DIR)
 
-clean: ## Clean build artifacts and containers
+clean: test-clean ## Clean build artifacts and containers
 	$(GOCLEAN)
 	rm -rf $(BINARY_OUTPUT_DIR)
 	rm -rf $(TEST_OUTPUT_DIR)
@@ -109,14 +131,16 @@ sec-check: ## Run security scan
 	@echo "==> Running security scan"
 	$(GOSEC) ./...
 
-test: ## Run tests
-	@echo "==> Running tests"
+test: test-deps ## Run tests with database
+	@echo "==> Running tests..."
 	$(GOTEST) -v -race ./...
+	$(MAKE) test-clean
 
-coverage: ## Generate coverage report
+coverage: test-deps ## Generate coverage report
 	@echo "==> Generating coverage report"
 	$(GOTEST) -v -coverprofile=$(COVERAGE_FILE) ./...
 	$(GOCMD) tool cover -html=$(COVERAGE_FILE)
+	$(MAKE) test-clean
 
 build-server: $(BINARY_OUTPUT_DIR) ## Build server binary
 	@echo "==> Building server"
@@ -135,7 +159,6 @@ install-tools: ## Install development tools
 
 all: deps fmt vet lint sec-check test build ## Run full verification and build
 
-# Development targets
 run-server: build-server ## Run server
 	@echo "==> Running server"
 	$(SERVER_PATH)
@@ -150,7 +173,6 @@ dev: ## Run with hot reload
 	@echo "==> Starting development server"
 	air -c .air.toml
 
-# Container targets
 build-images: ## Build container images
 	@echo "==> Building container images with $(CONTAINER_ENGINE)"
 	$(CONTAINER_ENGINE) build -t $(SERVER_IMAGE) -t $(SERVER_IMAGE_LATEST) -f build/server/Dockerfile $(BUILD_CONTEXT)
@@ -183,7 +205,6 @@ compose-ps: ## List compose containers
 	@echo "==> Listing compose containers"
 	$(COMPOSE_ENGINE) -f $(COMPOSE_FILE) ps
 
-# Quick productivity commands
 x: ## Copy project tree structure to clipboard (ignoring git files)
 	@echo "==> Copying tree structure to clipboard"
 	@tree --gitignore | $(COPY_TO_CLIPBOARD)
@@ -196,7 +217,6 @@ z: ## Copy 4 most recent git log messages to clipboard while displaying
 	@echo "==> Copying 4 most recent git log messages and copying output..."
 	@{ git log -n4 2>&1; } | $(COPY_TO_CLIPBOARD)
 
-# Single container targets
 docker-run-server: ## Run server container
 	@echo "==> Running server container"
 	$(CONTAINER_ENGINE) run -d --name $(SERVER_NAME) $(SERVER_IMAGE)
