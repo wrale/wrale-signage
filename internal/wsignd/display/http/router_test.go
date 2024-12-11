@@ -1,13 +1,16 @@
 package http
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"sync"
 	"testing"
 
 	"log/slog"
-	"os"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -95,6 +98,32 @@ func TestRouterMiddleware(t *testing.T) {
 	})
 
 	t.Run("recovers from panic", func(t *testing.T) {
+		// Create pipe to capture stderr
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Save original stderr and replace with pipe
+		stderr := os.Stderr
+		os.Stderr = w
+
+		// Create WaitGroup to sync goroutines
+		var wg sync.WaitGroup
+		wg.Add(1)
+
+		// Buffer to store captured output
+		var buf bytes.Buffer
+
+		// Start goroutine to read from pipe
+		go func() {
+			defer wg.Done()
+			_, err := io.Copy(&buf, r)
+			if err != nil {
+				t.Error("Failed to read panic output:", err)
+			}
+		}()
+
 		router := chi.NewRouter()
 		router.Use(middleware.Recoverer)
 		router.Get("/test", func(w http.ResponseWriter, r *http.Request) {
@@ -106,7 +135,21 @@ func TestRouterMiddleware(t *testing.T) {
 
 		router.ServeHTTP(rec, req)
 
+		// Close writer and restore stderr
+		w.Close()
+		os.Stderr = stderr
+		r.Close()
+
+		// Wait for pipe reader to finish
+		wg.Wait()
+
+		// Verify panic was recovered and returned 500
 		assert.Equal(t, http.StatusInternalServerError, rec.Code)
+
+		// Verify panic output was captured
+		output := buf.String()
+		assert.Contains(t, output, "test panic")
+		assert.Contains(t, output, "router_test.go")
 	})
 
 	t.Run("handles context cancellation", func(t *testing.T) {
