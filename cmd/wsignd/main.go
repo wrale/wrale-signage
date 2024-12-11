@@ -19,10 +19,11 @@ import (
 	"github.com/wrale/wrale-signage/internal/wsignd/config"
 	"github.com/wrale/wrale-signage/internal/wsignd/content"
 	contenthttp "github.com/wrale/wrale-signage/internal/wsignd/content/http"
+	contentpg "github.com/wrale/wrale-signage/internal/wsignd/content/postgres"
 	"github.com/wrale/wrale-signage/internal/wsignd/database"
 	"github.com/wrale/wrale-signage/internal/wsignd/display"
 	displayhttp "github.com/wrale/wrale-signage/internal/wsignd/display/http"
-	"github.com/wrale/wrale-signage/internal/wsignd/display/postgres"
+	displaypg "github.com/wrale/wrale-signage/internal/wsignd/display/postgres"
 	"github.com/wrale/wrale-signage/internal/wsignd/display/service"
 )
 
@@ -125,7 +126,7 @@ func setupRouter(cfg *config.Config, db *sql.DB, logger *slog.Logger) http.Handl
 	r := chi.NewRouter()
 
 	// Set up display service dependencies
-	displayRepo := postgres.NewRepository(db, logger)
+	displayRepo := displaypg.NewRepository(db, logger)
 	displayPublisher := &noopEventPublisher{} // TODO: Implement real event publisher
 	displayService := service.New(displayRepo, displayPublisher, logger)
 
@@ -134,10 +135,10 @@ func setupRouter(cfg *config.Config, db *sql.DB, logger *slog.Logger) http.Handl
 	r.Mount("/api/v1alpha1/displays", displayHandler.Router())
 
 	// Set up content service dependencies
-	contentRepo := content.NewPostgresRepository(db, logger)
-	contentProcessor := content.NewEventProcessor(logger)
-	contentMetrics := content.NewMetricsAggregator(logger)
-	contentMonitor := content.NewHealthMonitor(logger)
+	contentRepo := contentpg.NewRepository(db)
+	contentProcessor := &noopEventProcessor{}  // TODO: Implement real event processor
+	contentMetrics := &noopMetricsAggregator{} // TODO: Implement real metrics
+	contentMonitor := &noopHealthMonitor{}     // TODO: Implement real monitor
 	contentService := content.NewService(contentRepo, contentProcessor, contentMetrics, contentMonitor)
 
 	// Create and mount content handlers
@@ -152,4 +153,31 @@ type noopEventPublisher struct{}
 
 func (p *noopEventPublisher) Publish(ctx context.Context, event display.Event) error {
 	return nil
+}
+
+// Temporary no-op implementations for content infrastructure
+type noopEventProcessor struct{}
+
+func (p *noopEventProcessor) ProcessEvents(ctx context.Context, batch content.EventBatch) error {
+	return nil
+}
+
+type noopMetricsAggregator struct{}
+
+func (m *noopMetricsAggregator) RecordMetrics(ctx context.Context, event content.Event) error {
+	return nil
+}
+
+func (m *noopMetricsAggregator) GetURLMetrics(ctx context.Context, url string) (*content.URLMetrics, error) {
+	return &content.URLMetrics{URL: url}, nil
+}
+
+type noopHealthMonitor struct{}
+
+func (h *noopHealthMonitor) CheckHealth(ctx context.Context, url string) (*content.HealthStatus, error) {
+	return &content.HealthStatus{URL: url, Healthy: true}, nil
+}
+
+func (h *noopHealthMonitor) GetHealthHistory(ctx context.Context, url string) ([]content.HealthStatus, error) {
+	return []content.HealthStatus{}, nil
 }
