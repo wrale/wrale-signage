@@ -42,12 +42,14 @@ npm run dev
 
 ### 1. Display Registration (5 minutes)
 
+TODO: Pick one of site-id/zone-id (OR) site/zone. I like the second one better.
+
 1. Open web interface at http://localhost:5173
 2. Browser interface loads and displays registration code (e.g., "BLUE-FISH")
 3. In another terminal, use CLI to register display:
 ```bash
 ./bin/wsignctl display activate BLUE-FISH \
-  --site headquarters \
+  --site-id headquarters \
   --zone lobby \
   --position main
 ```

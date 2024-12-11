@@ -29,6 +29,17 @@ type Context struct {
 	InsecureSkipVerify bool `mapstructure:"insecure-skip-verify"`
 }
 
+var defaultConfig = Config{
+	CurrentContext: "dev",
+	Contexts: map[string]*Context{
+		"dev": {
+			Name:   "dev",
+			Server: "http://localhost:8080",
+			Token:  "dev-secret-key",
+		},
+	},
+}
+
 // defaultConfigPath returns the default config file path
 func defaultConfigPath() string {
 	home, err := os.UserHomeDir()
@@ -45,31 +56,18 @@ func LoadConfig() (*Config, error) {
 		configPath = defaultConfigPath()
 	}
 
-	// Initialize viper with default values
-	viper.SetDefault("current-context", "")
-	viper.SetDefault("contexts", map[string]*Context{})
-
-	// Set up viper to read the config file
+	// Set up viper with default config
 	viper.SetConfigFile(configPath)
 	viper.SetConfigType("yaml")
-
-	// Try to read the config file
+	
+	// Initialize with defaults
 	if err := viper.ReadInConfig(); err != nil {
-		// If the config file doesn't exist, create a default one
 		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
-			// Ensure directory exists with restricted permissions
-			configDir := filepath.Dir(configPath)
-			if err := os.MkdirAll(configDir, 0750); err != nil {
-				return nil, fmt.Errorf("error creating config directory: %w", err)
-			}
-
-			// Write default config
-			if err := viper.SafeWriteConfig(); err != nil {
-				return nil, fmt.Errorf("error writing default config: %w", err)
-			}
-		} else {
-			return nil, fmt.Errorf("error reading config: %w", err)
+			// Return default config - no error needed since command flags may override
+			return &defaultConfig, nil
 		}
+		// Only error on actual read issues
+		return nil, fmt.Errorf("error reading config: %w", err)
 	}
 
 	// Parse the config into our struct
@@ -87,9 +85,28 @@ func SaveConfig(config *Config) error {
 	viper.Set("current-context", config.CurrentContext)
 	viper.Set("contexts", config.Contexts)
 
+	configPath := viper.ConfigFileUsed()
+	if configPath == "" {
+		configPath = defaultConfigPath()
+		viper.SetConfigFile(configPath)
+	}
+
+	// Ensure directory exists
+	configDir := filepath.Dir(configPath)
+	if err := os.MkdirAll(configDir, 0750); err != nil {
+		return fmt.Errorf("error creating config directory: %w", err)
+	}
+
 	// Write to disk
-	if err := viper.WriteConfig(); err != nil {
-		return fmt.Errorf("error writing config: %w", err)
+	if err := viper.SafeWriteConfig(); err != nil {
+		// Ignore already exists error
+		if _, ok := err.(viper.ConfigFileAlreadyExistsError); !ok {
+			return fmt.Errorf("error writing config: %w", err)
+		}
+		// File exists, overwrite it
+		if err := viper.WriteConfig(); err != nil {
+			return fmt.Errorf("error writing config: %w", err)
+		}
 	}
 
 	return nil

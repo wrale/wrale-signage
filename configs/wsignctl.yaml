@@ -1,0 +1,6 @@
+server: http://localhost:8080
+contexts:
+  dev:
+    server: http://localhost:8080
+    auth_token: dev-secret-key
+current_context: dev
