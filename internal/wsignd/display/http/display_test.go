@@ -96,6 +96,18 @@ func TestActivateDisplay(t *testing.T) {
 	handler, mockSvc := newTestHandler()
 
 	displayID := uuid.New()
+	existingDisplay := &display.Display{
+		ID:   displayID,
+		Name: "test-display",
+		Location: display.Location{
+			SiteID:   "site-1",
+			Zone:     "lobby",
+			Position: "main",
+		},
+		State:    display.StateActive,
+		LastSeen: time.Now(),
+		Version:  1,
+	}
 
 	tests := []struct {
 		name       string
@@ -107,7 +119,7 @@ func TestActivateDisplay(t *testing.T) {
 			name:      "successful activation",
 			displayID: displayID.String(),
 			mockSetup: func() {
-				mockSvc.On("Activate", mock.Anything, displayID).Return(nil)
+				mockSvc.On("Activate", mock.Anything, displayID).Return(existingDisplay, nil)
 			},
 			wantStatus: http.StatusOK,
 		},
@@ -123,7 +135,7 @@ func TestActivateDisplay(t *testing.T) {
 			name:      "invalid state transition",
 			displayID: displayID.String(),
 			mockSetup: func() {
-				mockSvc.On("Activate", mock.Anything, displayID).Return(display.ErrInvalidState{
+				mockSvc.On("Activate", mock.Anything, displayID).Return(nil, display.ErrInvalidState{
 					Current: display.StateDisabled,
 					Target:  display.StateActive,
 				})
@@ -134,7 +146,7 @@ func TestActivateDisplay(t *testing.T) {
 			name:      "display not found",
 			displayID: displayID.String(),
 			mockSetup: func() {
-				mockSvc.On("Activate", mock.Anything, displayID).Return(display.ErrNotFound{ID: displayID.String()})
+				mockSvc.On("Activate", mock.Anything, displayID).Return(nil, display.ErrNotFound{ID: displayID.String()})
 			},
 			wantStatus: http.StatusNotFound,
 		},
