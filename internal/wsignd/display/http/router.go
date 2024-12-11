@@ -16,23 +16,20 @@ func NewRouter(h *Handler) chi.Router {
 	r.Use(middleware.Recoverer)
 	r.Use(logMiddleware(h.logger))
 
-	// API Routes v1alpha1
-	r.Route("/api/v1alpha1/displays", func(r chi.Router) {
-		// Device activation flow
-		r.Post("/device/code", h.RequestDeviceCode)
-		r.Post("/activate", h.ActivateDeviceCode)
+	// Device activation flow
+	r.Post("/device/code", h.RequestDeviceCode)
+	r.Post("/activate", h.ActivateDeviceCode)
 
-		// Display registration and management
-		r.Post("/", h.RegisterDisplay)
-		r.Route("/{id}", func(r chi.Router) {
-			r.Get("/", h.GetDisplay)
-			r.Put("/activate", h.ActivateDisplay)
-			r.Put("/last-seen", h.UpdateLastSeen)
-		})
-
-		// WebSocket control endpoint
-		r.Get("/ws", h.ServeWs)
+	// Display registration and management
+	r.Post("/", h.RegisterDisplay)
+	r.Route("/{id}", func(r chi.Router) {
+		r.Get("/", h.GetDisplay)
+		r.Put("/activate", h.ActivateDisplay)
+		r.Put("/last-seen", h.UpdateLastSeen)
 	})
+
+	// WebSocket control endpoint
+	r.Get("/ws", h.ServeWs)
 
 	return r
 }
