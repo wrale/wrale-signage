@@ -13,7 +13,7 @@ import (
 // newActivateCommand creates a command for activating displays showing setup codes
 func newActivateCommand() *cobra.Command {
 	var (
-		siteID   string
+		site     string
 		zone     string
 		position string
 		labels   []string
@@ -29,10 +29,10 @@ location information and any additional properties.
 The activation code should be visible on the display's screen after it has
 connected to the displays.{domain} endpoint.`,
 		Example: `  # Activate a display showing code BLUE-FISH
-  wsignctl display activate BLUE-FISH --site-id=hq --zone=lobby --position=north
+  wsignctl display activate BLUE-FISH --site=hq --zone=lobby --position=north
   
   # Activate with additional metadata
-  wsignctl display activate CAKE-MOON --site-id=hq --zone=cafeteria --position=menu-1 \
+  wsignctl display activate CAKE-MOON --site=hq --zone=cafeteria --position=menu-1 \
     --label=orientation=portrait`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -54,13 +54,13 @@ connected to the displays.{domain} endpoint.`,
 			}
 
 			// Generate default name from site and position
-			displayName := fmt.Sprintf("%s-%s-%s", siteID, zone, position)
+			displayName := fmt.Sprintf("%s-%s-%s", site, zone, position)
 
 			// Build registration request
 			reg := &v1alpha1.DisplayRegistrationRequest{
 				Name: displayName,
 				Location: v1alpha1.DisplayLocation{
-					SiteID:   siteID,
+					SiteID:   site,
 					Zone:     zone,
 					Position: position,
 				},
@@ -100,18 +100,16 @@ connected to the displays.{domain} endpoint.`,
 	}
 
 	// Add location flags
-	cmd.Flags().StringVar(&siteID, "site-id", "", "Site identifier (required)")
+	cmd.Flags().StringVar(&site, "site", "", "Site identifier (required)")
 	cmd.Flags().StringVar(&zone, "zone", "", "Zone within site (required)")
 	cmd.Flags().StringVar(&position, "position", "", "Position within zone (required)")
 	cmd.Flags().StringArrayVar(&labels, "label", nil, "Additional labels in key=value format")
 	cmd.Flags().StringVarP(&output, "output", "o", "", "Output format (json)")
 
 	// Mark required flags and handle potential errors
-	requiredFlags := []string{"site-id", "zone", "position"}
+	requiredFlags := []string{"site", "zone", "position"}
 	for _, flag := range requiredFlags {
 		if err := cmd.MarkFlagRequired(flag); err != nil {
-			// Since this is during command construction, we should panic
-			// This follows cobra's pattern for command setup errors
 			panic(fmt.Sprintf("failed to mark %q flag as required: %v", flag, err))
 		}
 	}
