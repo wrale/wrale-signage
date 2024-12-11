@@ -144,13 +144,13 @@ func (r *repository) GetURLMetrics(ctx context.Context, url string, since time.T
 		// Get average timing metrics using NULLIF to handle zero counts
 		err = tx.QueryRowContext(ctx, `
 			SELECT 
-				COALESCE(AVG(NULLIF((metrics->>'loadTime')::bigint, 0)), 0),
-				COALESCE(AVG(NULLIF((metrics->>'renderTime')::bigint, 0)), 0)
+				ROUND(COALESCE(AVG(CAST(COALESCE(metrics->>'loadTime', '0') AS bigint)), 0)),
+				ROUND(COALESCE(AVG(CAST(COALESCE(metrics->>'renderTime', '0') AS bigint)), 0))
 			FROM content_events 
 			WHERE url = $1 
 				AND timestamp >= $2
 				AND metrics IS NOT NULL
-				AND metrics ? 'loadTime'
+				AND type = 'CONTENT_LOADED'
 		`, url, since).Scan(&metrics.AvgLoadTime, &metrics.AvgRenderTime)
 		if err != nil && err != sql.ErrNoRows {
 			return err
@@ -171,6 +171,7 @@ func (r *repository) GetURLMetrics(ctx context.Context, url string, since time.T
 				AND timestamp >= $2
 				AND type = 'CONTENT_ERROR'
 				AND error IS NOT NULL
+				AND error->>'code' IS NOT NULL
 			GROUP BY error->>'code', total_count
 		`, url, since)
 		if err != nil {
