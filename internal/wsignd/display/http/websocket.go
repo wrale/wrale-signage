@@ -12,6 +12,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	v1alpha1 "github.com/wrale/wrale-signage/api/types/v1alpha1"
+	"github.com/wrale/wrale-signage/internal/wsignd/display"
 )
 
 const (
@@ -143,11 +144,11 @@ type Hub struct {
 
 func newHub(logger *slog.Logger) *Hub {
 	return &Hub{
-		broadcast:    make(chan []byte),
-		register:     make(chan *connection),
-		unregister:   make(chan *connection),
-		connections:  make(map[*connection]bool),
-		logger:       logger,
+		broadcast:   make(chan []byte),
+		register:    make(chan *connection),
+		unregister:  make(chan *connection),
+		connections: make(map[*connection]bool),
+		logger:      logger,
 	}
 }
 
@@ -184,6 +185,22 @@ func (h *Hub) run(ctx context.Context) {
 	}
 }
 
+// convert converts between domain and API display states
+func convert(s display.State) v1alpha1.DisplayState {
+	switch s {
+	case display.StateUnregistered:
+		return v1alpha1.DisplayStateUnregistered
+	case display.StateActive:
+		return v1alpha1.DisplayStateActive
+	case display.StateOffline:
+		return v1alpha1.DisplayStateOffline
+	case display.StateDisabled:
+		return v1alpha1.DisplayStateDisabled
+	default:
+		return v1alpha1.DisplayStateOffline
+	}
+}
+
 // ServeWs handles websocket requests from displays
 func (h *Handler) ServeWs(w http.ResponseWriter, r *http.Request) {
 	displayID, err := uuid.Parse(r.URL.Query().Get("id"))
@@ -203,7 +220,7 @@ func (h *Handler) ServeWs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if display.State != v1alpha1.DisplayStateActive {
+	if convert(display.State) != v1alpha1.DisplayStateActive {
 		http.Error(w, "display not active", http.StatusForbidden)
 		return
 	}
