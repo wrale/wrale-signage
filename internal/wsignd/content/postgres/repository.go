@@ -73,7 +73,7 @@ func (r *repository) GetURLMetrics(ctx context.Context, url string, since time.T
 	metrics.URL = url
 	metrics.ErrorRates = make(map[string]float64)
 
-	err := database.RunInTx(ctx, r.db, &sql.TxOptions{ReadOnly: true}, func(tx *database.Tx) error {
+	err := database.RunInTx(ctx, r.db, &database.TxOptions{ReadOnly: true}, func(tx *database.Tx) error {
 		// Get last seen timestamp
 		err := tx.QueryRowContext(ctx, `
 			SELECT EXTRACT(EPOCH FROM MAX(timestamp))
@@ -155,7 +155,7 @@ func (r *repository) GetDisplayEvents(ctx context.Context, displayID uuid.UUID, 
 
 	var events []content.Event
 
-	err := database.RunInTx(ctx, r.db, &sql.TxOptions{ReadOnly: true}, func(tx *database.Tx) error {
+	err := database.RunInTx(ctx, r.db, &database.TxOptions{ReadOnly: true}, func(tx *database.Tx) error {
 		rows, err := tx.QueryContext(ctx, `
 			SELECT 
 				id, display_id, type, url, timestamp,
