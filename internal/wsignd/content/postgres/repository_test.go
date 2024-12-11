@@ -19,7 +19,7 @@ func setupTestDB(t *testing.T) (*sql.DB, func()) {
 	require.NoError(t, err)
 
 	// Run migrations
-	err = database.RunMigrations(db, "../../migrations")
+	err = database.RunMigrations(db)
 	require.NoError(t, err)
 
 	return db, func() {
