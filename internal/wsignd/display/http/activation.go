@@ -39,7 +39,14 @@ func (h *Handler) RequestDeviceCode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		h.logger.Error("failed to encode response",
+			"error", err,
+			"requestID", reqID,
+		)
+		h.writeError(w, werrors.NewError("ENCODING_ERROR", "failed to encode response", "RequestDeviceCode", err), http.StatusInternalServerError)
+		return
+	}
 }
 
 // ActivateDeviceCode handles device activation by user code
@@ -115,5 +122,12 @@ func (h *Handler) ActivateDeviceCode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		h.logger.Error("failed to encode response",
+			"error", err,
+			"requestID", reqID,
+		)
+		h.writeError(w, werrors.NewError("ENCODING_ERROR", "failed to encode response", "ActivateDeviceCode", err), http.StatusInternalServerError)
+		return
+	}
 }

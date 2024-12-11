@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/wrale/wrale-signage/internal/wsignd/database"
 	"github.com/wrale/wrale-signage/internal/wsignd/display/activation"
+	werrors "github.com/wrale/wrale-signage/internal/wsignd/errors"
 )
 
 type Repository struct {
@@ -22,7 +23,7 @@ func NewRepository(db *sql.DB, logger *slog.Logger) activation.Repository {
 func (r *Repository) Save(code *activation.DeviceCode) error {
 	const op = "DeviceCodeRepository.Save"
 
-	return database.RunInTx(context.Background(), r.db, nil, func(tx *database.Tx) error {
+	err := database.RunInTx(context.Background(), r.db, nil, func(tx *database.Tx) error {
 		_, err := tx.ExecContext(context.Background(), `
 			INSERT INTO device_codes (
 				id, device_code, user_code,
@@ -45,6 +46,11 @@ func (r *Repository) Save(code *activation.DeviceCode) error {
 		)
 		return err
 	})
+
+	if err != nil {
+		return werrors.NewError("DB_ERROR", "failed to save device code", op, err)
+	}
+	return nil
 }
 
 func (r *Repository) FindByDeviceCode(code string) (*activation.DeviceCode, error) {
@@ -73,7 +79,7 @@ func (r *Repository) FindByDeviceCode(code string) (*activation.DeviceCode, erro
 		return nil, activation.ErrCodeNotFound
 	}
 	if err != nil {
-		return nil, err
+		return nil, werrors.NewError("DB_ERROR", "failed to find device code", op, err)
 	}
 	return &dc, nil
 }
@@ -104,7 +110,7 @@ func (r *Repository) FindByUserCode(code string) (*activation.DeviceCode, error)
 		return nil, activation.ErrCodeNotFound
 	}
 	if err != nil {
-		return nil, err
+		return nil, werrors.NewError("DB_ERROR", "failed to find device code", op, err)
 	}
 	return &dc, nil
 }
@@ -112,9 +118,22 @@ func (r *Repository) FindByUserCode(code string) (*activation.DeviceCode, error)
 func (r *Repository) Delete(id uuid.UUID) error {
 	const op = "DeviceCodeRepository.Delete"
 
-	_, err := r.db.ExecContext(context.Background(), `
+	result, err := r.db.ExecContext(context.Background(), `
 		DELETE FROM device_codes
 		WHERE id = $1
 	`, id)
-	return err
+	if err != nil {
+		return werrors.NewError("DB_ERROR", "failed to delete device code", op, err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return werrors.NewError("DB_ERROR", "failed to get affected rows", op, err)
+	}
+
+	if rows == 0 {
+		return werrors.NewError("NOT_FOUND", "device code not found", op, activation.ErrCodeNotFound)
+	}
+
+	return nil
 }
