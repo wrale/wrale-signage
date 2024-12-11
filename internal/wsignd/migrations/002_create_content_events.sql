@@ -1,8 +1,6 @@
 -- Migration: 002
 -- Description: Create content events table
--- Version: 2
 
--- Up Migration
 CREATE TABLE content_events (
     id          UUID PRIMARY KEY,
     display_id  UUID NOT NULL REFERENCES displays(id),
@@ -22,8 +20,4 @@ CREATE INDEX content_events_timestamp_idx ON content_events (timestamp);
 CREATE INDEX content_events_type_idx ON content_events (type);
 
 -- Add partitioning by time for efficient cleanup
--- Note: Requires appropriate retention policy implementation
 CREATE INDEX content_events_cleanup_idx ON content_events (created_at);
-
--- Down Migration
-DROP TABLE IF EXISTS content_events;

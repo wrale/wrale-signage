@@ -1,8 +1,6 @@
 -- Migration: 001
 -- Description: Create displays table
--- Version: 1
 
--- Up Migration
 CREATE TABLE displays (
     id              UUID PRIMARY KEY,
     name            TEXT NOT NULL UNIQUE,
@@ -35,8 +33,3 @@ CREATE TRIGGER update_displays_updated_at
     BEFORE UPDATE ON displays
     FOR EACH ROW
     EXECUTE PROCEDURE update_updated_at_column();
-
--- Down Migration
-DROP TRIGGER IF EXISTS update_displays_updated_at ON displays;
-DROP FUNCTION IF EXISTS update_updated_at_column();
-DROP TABLE IF EXISTS displays;
