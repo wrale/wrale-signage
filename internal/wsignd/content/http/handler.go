@@ -20,6 +20,10 @@ func NewHandler(service content.Service) *Handler {
 	}
 }
 
+func (h *Handler) Router() chi.Router {
+	return NewRouter(h)
+}
+
 func (h *Handler) CreateContent(w http.ResponseWriter, r *http.Request) {
 	var req v1alpha1.ContentSource
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
