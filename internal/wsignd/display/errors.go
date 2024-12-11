@@ -21,6 +21,15 @@ func (e ErrNotFound) Error() string {
 	return fmt.Sprintf("display not found: %s", e.ID)
 }
 
+// ErrExists indicates a duplicate display name
+type ErrExists struct {
+	Name string
+}
+
+func (e ErrExists) Error() string {
+	return fmt.Sprintf("display already exists: %s", e.Name)
+}
+
 // ErrInvalidState indicates an invalid state transition
 type ErrInvalidState struct {
 	Current State
