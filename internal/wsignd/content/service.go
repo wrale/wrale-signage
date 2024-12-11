@@ -37,6 +37,31 @@ func (s *contentService) CreateContent(ctx context.Context, content *v1alpha1.Co
 	return s.repo.CreateContent(ctx, content)
 }
 
+func (s *contentService) UpdateContent(ctx context.Context, content *v1alpha1.ContentSource) error {
+	if err := content.Spec.Validate(); err != nil {
+		return err
+	}
+
+	// Update status fields
+	content.Status.LastValidated = time.Now()
+	content.Status.Version++ // Increment version on update
+
+	// Store in repository
+	return s.repo.UpdateContent(ctx, content)
+}
+
+func (s *contentService) DeleteContent(ctx context.Context, name string) error {
+	return s.repo.DeleteContent(ctx, name)
+}
+
+func (s *contentService) GetContent(ctx context.Context, name string) (*v1alpha1.ContentSource, error) {
+	return s.repo.GetContent(ctx, name)
+}
+
+func (s *contentService) ListContent(ctx context.Context) ([]v1alpha1.ContentSource, error) {
+	return s.repo.ListContent(ctx)
+}
+
 func (s *contentService) ReportEvents(ctx context.Context, batch EventBatch) error {
 	if err := s.processor.ProcessEvents(ctx, batch); err != nil {
 		return err
