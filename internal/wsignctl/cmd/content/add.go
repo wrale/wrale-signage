@@ -3,93 +3,69 @@ package content
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/wrale/wrale-signage/api/types/v1alpha1"
+
 	"github.com/wrale/wrale-signage/internal/wsignctl/util"
 )
 
-func newAddCmd() *cobra.Command {
-	var (
-		url         string
-		contentType string
-		properties  []string
-	)
+type addOptions struct {
+	path        string
+	duration    time.Duration
+	contentType string
+	properties  []string
+}
+
+func newAddCommand() *cobra.Command {
+	var opts addOptions
 
 	cmd := &cobra.Command{
-		Use:   "add NAME",
-		Short: "Add a content source",
-		Long: `Add a new content source that displays can be redirected to.
+		Use:   "add NAME [flags]",
+		Short: "Add new content source",
+		Long: `Add a new content source. Content can be loaded from a local path,
+during development, or from a remote URL in production.`,
+		Example: `  # Add a simple test content source
+  wsignctl content add welcome \
+    --path demo/content/welcome.html \
+    --duration 10s
 
-A content source needs:
-- A unique name for referring to it in redirect rules
-- A URL where content can be found
-- A content type that identifies what kind of content this is
-- Optional properties for additional metadata`,
-		Example: `  # Add a basic content source
-  wsignctl content add menus --url=https://menu.example.com --type=menu
-  
-  # Add source with additional properties
-  wsignctl content add intranet \
-    --url=https://intranet.example.com/signage \
-    --type=internal \
-    --property=department=hr \
-    --property=audience=employees`,
+  # Add content with properties
+  wsignctl content add news \
+    --path demo/content/news.html \
+    --duration 15s \
+    --property department=marketing \
+    --property priority=high`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 
+			client, err := util.GetClientFromCommand(cmd)
+			if err != nil {
+				return err
+			}
+
 			// Parse properties into map
-			props := make(map[string]string)
-			for _, prop := range properties {
+			properties := make(map[string]string)
+			for _, prop := range opts.properties {
 				parts := strings.SplitN(prop, "=", 2)
 				if len(parts) != 2 {
-					return fmt.Errorf("invalid property format %q - use Key=Value", prop)
+					return fmt.Errorf("invalid property format %q - use key=value", prop)
 				}
-				props[parts[0]] = parts[1]
+				properties[parts[0]] = parts[1]
 			}
 
-			// Create the content source
-			source := &v1alpha1.ContentSource{
-				TypeMeta: v1alpha1.TypeMeta{
-					Kind:       "ContentSource",
-					APIVersion: "v1alpha1",
-				},
-				ObjectMeta: v1alpha1.ObjectMeta{
-					Name: name,
-				},
-				Spec: v1alpha1.ContentSourceSpec{
-					URL:        url,
-					Type:       contentType,
-					Properties: props,
-				},
-			}
-
-			// Get client using the command context
-			c, err := util.GetClientFromCommand(cmd)
-			if err != nil {
-				return fmt.Errorf("failed to create API client: %w", err)
-			}
-
-			if err := c.AddContentSource(cmd.Context(), source); err != nil {
-				return fmt.Errorf("error adding content source: %w", err)
-			}
-
-			fmt.Printf("Content source %q added\n", name)
-			return nil
+			return client.CreateContent(cmd.Context(), name, opts.path, opts.duration, opts.contentType, properties)
 		},
 	}
 
-	cmd.Flags().StringVar(&url, "url", "", "URL where content can be found (required)")
-	cmd.Flags().StringVar(&contentType, "type", "", "Type of content (required)")
-	cmd.Flags().StringArrayVar(&properties, "property", nil, "Additional properties in Key=Value format")
+	cmd.Flags().StringVar(&opts.path, "path", "", "Path to content file or directory (required)")
+	cmd.Flags().DurationVar(&opts.duration, "duration", 10*time.Second, "How long to display content")
+	cmd.Flags().StringVar(&opts.contentType, "type", "static-page", "Type of content")
+	cmd.Flags().StringArrayVar(&opts.properties, "property", nil, "Additional properties in key=value format")
 
-	if err := cmd.MarkFlagRequired("url"); err != nil {
-		// This should only happen during development
-		panic(fmt.Sprintf("failed to mark 'url' flag as required: %v", err))
-	}
-	if err := cmd.MarkFlagRequired("type"); err != nil {
-		panic(fmt.Sprintf("failed to mark 'type' flag as required: %v", err))
+	if err := cmd.MarkFlagRequired("path"); err != nil {
+		panic(fmt.Sprintf("failed to mark path flag as required: %v", err))
 	}
 
 	return cmd

@@ -3,81 +3,68 @@ package content
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/wrale/wrale-signage/api/types/v1alpha1"
 	"github.com/wrale/wrale-signage/internal/wsignctl/util"
 )
 
-func newUpdateCmd() *cobra.Command {
-	var (
-		url         string
-		addProps    []string
-		removeProps []string
-	)
+type updateOptions struct {
+	path        string
+	duration    time.Duration
+	contentType string
+	properties  []string
+	remove      []string
+}
+
+func newUpdateCommand() *cobra.Command {
+	var opts updateOptions
 
 	cmd := &cobra.Command{
-		Use:   "update NAME",
-		Short: "Update a content source",
-		Long: `Update the configuration of an existing content source.
+		Use:   "update NAME [flags]",
+		Short: "Update content source",
+		Example: `  # Update content path
+  wsignctl content update welcome \
+    --path demo/content/new-welcome.html
 
-You can modify:
-- The URL where content is found
-- Properties (add or remove)`,
-		Example: `  # Update URL
-  wsignctl content update menus --url=https://newmenu.example.com
-  
-  # Modify properties
-  wsignctl content update weather \
-    --add-property=refresh=5m \
-    --remove-property=old-key`,
+  # Update properties
+  wsignctl content update news \
+    --property department=sales \
+    --property priority=low \
+    --remove-property author`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 
-			// Parse properties to add/update
-			properties := make(map[string]string)
-			for _, prop := range addProps {
-				parts := strings.SplitN(prop, "=", 2)
-				if len(parts) != 2 {
-					return fmt.Errorf("invalid property format %q - use Key=Value", prop)
-				}
-				properties[parts[0]] = parts[1]
-			}
-
-			// Mark properties to remove with empty values
-			for _, prop := range removeProps {
-				if strings.Contains(prop, "=") {
-					return fmt.Errorf("use just the property name to remove, not %q", prop)
-				}
-				properties[prop] = ""
-			}
-
-			// Build update
-			update := &v1alpha1.ContentSourceUpdate{
-				Properties: properties,
-			}
-			if url != "" {
-				update.URL = &url
-			}
-
-			c, err := util.GetClientFromCommand(cmd)
+			client, err := util.GetClientFromCommand(cmd)
 			if err != nil {
 				return err
 			}
 
-			if err := c.UpdateContentSource(cmd.Context(), name, update); err != nil {
-				return fmt.Errorf("error updating content source: %w", err)
+			// Parse properties
+			properties := make(map[string]string)
+			for _, prop := range opts.properties {
+				parts := strings.SplitN(prop, "=", 2)
+				if len(parts) != 2 {
+					return fmt.Errorf("invalid property format %q - use key=value", prop)
+				}
+				properties[parts[0]] = parts[1]
 			}
 
-			fmt.Printf("Content source %q updated\n", name)
+			if err := client.UpdateContent(cmd.Context(), name, opts.path, opts.duration, opts.contentType, properties, opts.remove); err != nil {
+				return fmt.Errorf("error updating content: %w", err)
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(), "Content %q updated\n", name)
 			return nil
 		},
 	}
 
-	cmd.Flags().StringVar(&url, "url", "", "New URL for content")
-	cmd.Flags().StringArrayVar(&addProps, "add-property", nil, "Add properties in Key=Value format")
-	cmd.Flags().StringArrayVar(&removeProps, "remove-property", nil, "Remove properties by name")
+	cmd.Flags().StringVar(&opts.path, "path", "", "New content path")
+	cmd.Flags().DurationVar(&opts.duration, "duration", 0, "New display duration")
+	cmd.Flags().StringVar(&opts.contentType, "type", "", "New content type")
+	cmd.Flags().StringArrayVar(&opts.properties, "property", nil, "Properties to add/update")
+	cmd.Flags().StringArrayVar(&opts.remove, "remove-property", nil, "Properties to remove")
 
 	return cmd
 }
