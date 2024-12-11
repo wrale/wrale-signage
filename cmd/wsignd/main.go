@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -124,7 +125,7 @@ func setupRouter(cfg *config.Config, db *sql.DB, logger *slog.Logger) http.Handl
 	// Set up display service dependencies
 	repo := postgres.NewRepository(db, logger)
 	publisher := &noopEventPublisher{} // TODO: Implement real event publisher
-	service := service.New(repo, publisher)
+	service := service.New(repo, publisher, logger)
 
 	// Create and mount display handlers
 	displayHandler := displayhttp.NewHandler(service, logger)
