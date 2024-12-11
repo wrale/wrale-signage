@@ -35,6 +35,16 @@ func NewHandler(service display.Service, logger *slog.Logger) *Handler {
 	return h
 }
 
+// requestIDHeaderMiddleware copies request ID from context to response header
+func requestIDHeaderMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if reqID := middleware.GetReqID(r.Context()); reqID != "" {
+			w.Header().Set("Request-ID", reqID)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // Router returns a configured chi router for display endpoints
 func (h *Handler) Router() *chi.Mux {
 	r := chi.NewRouter()
@@ -44,6 +54,7 @@ func (h *Handler) Router() *chi.Mux {
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
+	r.Use(requestIDHeaderMiddleware)
 
 	// Add our routes
 	r.Route("/api/v1alpha1/displays", func(r chi.Router) {
