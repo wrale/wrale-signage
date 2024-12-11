@@ -14,6 +14,7 @@ var (
 	DefaultConfigDirs = []string{
 		"/etc/wrale-signage",
 		"/usr/local/etc/wrale-signage",
+		"/users/josh/src/wrale-signage", // Development path
 	}
 
 	// allowedExtensions lists the allowed config file extensions
@@ -57,7 +58,7 @@ func validateConfigPath(path string) (string, error) {
 	validPath := false
 	configRoot := filepath.Dir(realPath)
 	for _, dir := range DefaultConfigDirs {
-		if strings.HasPrefix(configRoot, dir) {
+		if strings.HasPrefix(strings.ToLower(configRoot), strings.ToLower(dir)) {
 			validPath = true
 			break
 		}
@@ -72,7 +73,7 @@ func validateConfigPath(path string) (string, error) {
 	}
 
 	if !validPath {
-		return "", fmt.Errorf("config file must be in an allowed directory")
+		return "", fmt.Errorf("config file must be in an allowed directory (tried: %s)", configRoot)
 	}
 
 	return realPath, nil

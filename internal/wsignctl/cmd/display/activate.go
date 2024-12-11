@@ -53,9 +53,12 @@ connected to the displays.{domain} endpoint.`,
 				return err
 			}
 
+			// Generate default name from site and position
+			displayName := fmt.Sprintf("%s-%s-%s", siteID, zone, position)
+
 			// Build registration request
 			reg := &v1alpha1.DisplayRegistrationRequest{
-				Name: "", // Server will generate name if not provided
+				Name: displayName,
 				Location: v1alpha1.DisplayLocation{
 					SiteID:   siteID,
 					Zone:     zone,
