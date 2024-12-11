@@ -7,10 +7,16 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/wrale/wrale-signage/internal/wsignd/display"
 )
 
 func TestRouter(t *testing.T) {
-	handler, _ := newTestHandler()
+	handler, mockSvc := newTestHandler()
+
+	// Setup default mock behavior for name lookup
+	mockSvc.On("GetByName", mock.Anything, mock.AnythingOfType("string")).Return(nil, display.ErrNotFound{ID: "unknown"})
+
 	router := handler.Router()
 
 	tests := []struct {
@@ -29,7 +35,7 @@ func TestRouter(t *testing.T) {
 			name:       "display get endpoint exists",
 			method:     http.MethodGet,
 			path:       "/api/v1alpha1/displays/123",
-			wantStatus: http.StatusBadRequest, // Invalid UUID
+			wantStatus: http.StatusNotFound, // Not found after name lookup
 		},
 		{
 			name:       "display activate endpoint exists",
@@ -64,8 +70,11 @@ func TestRouter(t *testing.T) {
 }
 
 func TestRouterMiddleware(t *testing.T) {
-	handler, _ := newTestHandler()
+	handler, mockSvc := newTestHandler()
 	router := handler.Router()
+
+	// Setup default mock behavior for name lookup
+	mockSvc.On("GetByName", mock.Anything, mock.AnythingOfType("string")).Return(nil, display.ErrNotFound{ID: "unknown"})
 
 	tests := []struct {
 		name string
@@ -110,9 +119,8 @@ func TestRouterMiddleware(t *testing.T) {
 
 				router.ServeHTTP(rec, req)
 
-				// Should still return BadRequest (invalid UUID) rather than timeout
-				// since the handler is fast enough
-				assert.Equal(t, http.StatusBadRequest, rec.Code)
+				// Should return NotFound since the service returns not found
+				assert.Equal(t, http.StatusNotFound, rec.Code)
 			},
 		},
 	}
