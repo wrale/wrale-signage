@@ -79,7 +79,7 @@ func TestRouterMiddleware(t *testing.T) {
 
 				router.ServeHTTP(rec, req)
 
-				assert.NotEmpty(t, rec.Header().Get("X-Request-ID"))
+				assert.NotEmpty(t, rec.Header().Get("Request-ID"))
 			},
 		},
 		{
