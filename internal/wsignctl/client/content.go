@@ -20,7 +20,8 @@ type Content struct {
 func (c *Client) CreateContent(ctx context.Context, name, url string, duration time.Duration, contentType string, properties map[string]string) error {
 	request := &v1alpha1.ContentSource{
 		TypeMeta: v1alpha1.TypeMeta{
-			Kind: "ContentSource",
+			APIVersion: "wrale.io/v1alpha1",
+			Kind:       "ContentSource",
 		},
 		ObjectMeta: v1alpha1.ObjectMeta{
 			Name: name,
