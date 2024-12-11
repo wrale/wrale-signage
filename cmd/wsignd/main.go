@@ -3,7 +3,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -123,7 +122,7 @@ func setupRouter(cfg *config.Config, db *sql.DB, logger *slog.Logger) http.Handl
 	r := chi.NewRouter()
 
 	// Set up display service dependencies
-	repo := postgres.NewRepository(db)
+	repo := postgres.NewRepository(db, logger)
 	publisher := &noopEventPublisher{} // TODO: Implement real event publisher
 	service := service.New(repo, publisher)
 

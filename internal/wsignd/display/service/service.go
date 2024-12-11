@@ -2,6 +2,8 @@
 package service
 
 import (
+	"log/slog"
+
 	"github.com/wrale/wrale-signage/internal/wsignd/display"
 )
 
@@ -9,12 +11,14 @@ import (
 type Service struct {
 	repo      display.Repository
 	publisher display.EventPublisher
+	logger    *slog.Logger
 }
 
 // New creates a new display service instance
-func New(repo display.Repository, publisher display.EventPublisher) display.Service {
+func New(repo display.Repository, publisher display.EventPublisher, logger *slog.Logger) display.Service {
 	return &Service{
 		repo:      repo,
 		publisher: publisher,
+		logger:    logger,
 	}
 }
