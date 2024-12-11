@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/wrale/wrale-signage/api/types/v1alpha1"
 	"github.com/wrale/wrale-signage/internal/wsignd/display"
+	"github.com/wrale/wrale-signage/internal/wsignd/errors"
 )
 
 // Handler implements HTTP handlers for display management
@@ -31,11 +32,48 @@ func NewHandler(service display.Service, logger *slog.Logger) *Handler {
 	return h
 }
 
+// writeError writes a JSON error response
+func (h *Handler) writeError(w http.ResponseWriter, err error, defaultStatus int) {
+	var werr *errors.Error
+	if errors.As(err, &werr) {
+		status := defaultStatus
+		switch werr.Code {
+		case "NOT_FOUND":
+			status = http.StatusNotFound
+		case "CONFLICT":
+			status = http.StatusConflict
+		case "INVALID_INPUT":
+			status = http.StatusBadRequest
+		}
+		
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		json.NewEncoder(w).Encode(map[string]string{
+			"code":    werr.Code,
+			"message": werr.Message,
+		})
+		return
+	}
+
+	// Default error response
+	http.Error(w, "internal server error", defaultStatus)
+}
+
 // RegisterDisplay handles display registration requests
 func (h *Handler) RegisterDisplay(w http.ResponseWriter, r *http.Request) {
 	var req v1alpha1.DisplayRegistrationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		h.writeError(w, errors.NewError("INVALID_INPUT", "invalid request body", "RegisterDisplay", err), http.StatusBadRequest)
+		return
+	}
+
+	// Validate request
+	if req.Name == "" {
+		h.writeError(w, errors.NewError("INVALID_INPUT", "display name is required", "RegisterDisplay", nil), http.StatusBadRequest)
+		return
+	}
+	if req.Location.SiteID == "" {
+		h.writeError(w, errors.NewError("INVALID_INPUT", "site ID is required", "RegisterDisplay", nil), http.StatusBadRequest)
 		return
 	}
 
@@ -53,7 +91,7 @@ func (h *Handler) RegisterDisplay(w http.ResponseWriter, r *http.Request) {
 			"error", err,
 			"name", req.Name,
 		)
-		http.Error(w, "registration failed", http.StatusInternalServerError)
+		h.writeError(w, err, http.StatusInternalServerError)
 		return
 	}
 
@@ -89,7 +127,7 @@ func (h *Handler) RegisterDisplay(w http.ResponseWriter, r *http.Request) {
 		h.logger.Error("failed to encode response",
 			"error", err,
 		)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		h.writeError(w, errors.NewError("INTERNAL", "failed to encode response", "RegisterDisplay", err), http.StatusInternalServerError)
 		return
 	}
 }
@@ -99,7 +137,7 @@ func (h *Handler) GetDisplay(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		http.Error(w, "invalid display ID", http.StatusBadRequest)
+		h.writeError(w, errors.NewError("INVALID_INPUT", "invalid display ID", "GetDisplay", err), http.StatusBadRequest)
 		return
 	}
 
@@ -109,7 +147,7 @@ func (h *Handler) GetDisplay(w http.ResponseWriter, r *http.Request) {
 			"error", err,
 			"id", id,
 		)
-		http.Error(w, "display not found", http.StatusNotFound)
+		h.writeError(w, err, http.StatusInternalServerError)
 		return
 	}
 
@@ -143,7 +181,7 @@ func (h *Handler) GetDisplay(w http.ResponseWriter, r *http.Request) {
 		h.logger.Error("failed to encode response",
 			"error", err,
 		)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		h.writeError(w, errors.NewError("INTERNAL", "failed to encode response", "GetDisplay", err), http.StatusInternalServerError)
 		return
 	}
 }
@@ -153,7 +191,7 @@ func (h *Handler) ActivateDisplay(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		http.Error(w, "invalid display ID", http.StatusBadRequest)
+		h.writeError(w, errors.NewError("INVALID_INPUT", "invalid display ID", "ActivateDisplay", err), http.StatusBadRequest)
 		return
 	}
 
@@ -162,7 +200,7 @@ func (h *Handler) ActivateDisplay(w http.ResponseWriter, r *http.Request) {
 			"error", err,
 			"id", id,
 		)
-		http.Error(w, "activation failed", http.StatusInternalServerError)
+		h.writeError(w, err, http.StatusInternalServerError)
 		return
 	}
 
@@ -174,7 +212,7 @@ func (h *Handler) UpdateLastSeen(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		http.Error(w, "invalid display ID", http.StatusBadRequest)
+		h.writeError(w, errors.NewError("INVALID_INPUT", "invalid display ID", "UpdateLastSeen", err), http.StatusBadRequest)
 		return
 	}
 
@@ -183,7 +221,7 @@ func (h *Handler) UpdateLastSeen(w http.ResponseWriter, r *http.Request) {
 			"error", err,
 			"id", id,
 		)
-		http.Error(w, "update failed", http.StatusInternalServerError)
+		h.writeError(w, err, http.StatusInternalServerError)
 		return
 	}
 

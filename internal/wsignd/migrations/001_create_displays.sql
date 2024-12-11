@@ -8,7 +8,7 @@ CREATE TABLE displays (
     zone            TEXT NOT NULL,
     position        TEXT NOT NULL,
     state           TEXT NOT NULL,
-    last_seen       TIMESTAMP WITH TIME ZONE NOT NULL,
+    last_seen       TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     version         INTEGER NOT NULL DEFAULT 1,
     properties      JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at      TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
