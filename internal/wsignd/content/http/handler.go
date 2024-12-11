@@ -48,7 +48,10 @@ func (h *Handler) CreateContent(w http.ResponseWriter, r *http.Request) {
 	// Return created content
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(req)
+	if err := json.NewEncoder(w).Encode(req); err != nil {
+		http.Error(w, "error encoding response", http.StatusInternalServerError)
+		return
+	}
 }
 
 func (h *Handler) ReportEvents(w http.ResponseWriter, r *http.Request) {
@@ -85,7 +88,10 @@ func (h *Handler) GetURLHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(status)
+	if err := json.NewEncoder(w).Encode(status); err != nil {
+		http.Error(w, "error encoding response", http.StatusInternalServerError)
+		return
+	}
 }
 
 func (h *Handler) GetURLMetrics(w http.ResponseWriter, r *http.Request) {
@@ -102,7 +108,10 @@ func (h *Handler) GetURLMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(metrics)
+	if err := json.NewEncoder(w).Encode(metrics); err != nil {
+		http.Error(w, "error encoding response", http.StatusInternalServerError)
+		return
+	}
 }
 
 func convertAPIEvents(apiEvents []v1alpha1.ContentEvent) []content.Event {
