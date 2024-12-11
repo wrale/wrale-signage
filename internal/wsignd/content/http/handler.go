@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/rs/zerolog"
 	"github.com/wrale/wrale-signage/api/types/v1alpha1"
 	"github.com/wrale/wrale-signage/internal/wsignd/content"
@@ -19,6 +20,18 @@ func NewHandler(service content.Service, logger zerolog.Logger) *Handler {
 		service: service,
 		logger:  logger.With().Str("component", "content-http").Logger(),
 	}
+}
+
+func (h *Handler) Router() chi.Router {
+	r := chi.NewRouter()
+	r.Post("/", h.handleCreateContent)
+	r.Get("/", h.handleListContent)
+	r.Route("/{name}", func(r chi.Router) {
+		r.Get("/", h.handleGetContent)
+		r.Put("/", h.handleUpdateContent)
+		r.Delete("/", h.handleDeleteContent)
+	})
+	return r
 }
 
 func (h *Handler) decodeContentSource(r *http.Request) (*v1alpha1.ContentSource, error) {
