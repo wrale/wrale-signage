@@ -25,7 +25,8 @@ docker-compose up -d postgres
 2. Build and start the server:
 ```bash
 make build
-./bin/wsignd --config configs/dev.yaml
+WSIGN_AUTH_TOKEN_KEY=dev-secret-key \
+  ./bin/wsignd --config configs/dev.yaml
 ```
 
 3. Build and start the web interface:
