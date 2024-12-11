@@ -20,6 +20,32 @@ func (m *mockRepository) CreateContent(ctx context.Context, content *v1alpha1.Co
 	return args.Error(0)
 }
 
+func (m *mockRepository) UpdateContent(ctx context.Context, content *v1alpha1.ContentSource) error {
+	args := m.Called(ctx, content)
+	return args.Error(0)
+}
+
+func (m *mockRepository) DeleteContent(ctx context.Context, name string) error {
+	args := m.Called(ctx, name)
+	return args.Error(0)
+}
+
+func (m *mockRepository) GetContent(ctx context.Context, name string) (*v1alpha1.ContentSource, error) {
+	args := m.Called(ctx, name)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*v1alpha1.ContentSource), args.Error(1)
+}
+
+func (m *mockRepository) ListContent(ctx context.Context) ([]v1alpha1.ContentSource, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]v1alpha1.ContentSource), args.Error(1)
+}
+
 func (m *mockRepository) SaveEvent(ctx context.Context, event Event) error {
 	args := m.Called(ctx, event)
 	return args.Error(0)

@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/wrale/wrale-signage/api/types/v1alpha1"
@@ -24,6 +25,32 @@ type mockService struct {
 func (m *mockService) CreateContent(ctx context.Context, content *v1alpha1.ContentSource) error {
 	args := m.Called(ctx, content)
 	return args.Error(0)
+}
+
+func (m *mockService) UpdateContent(ctx context.Context, content *v1alpha1.ContentSource) error {
+	args := m.Called(ctx, content)
+	return args.Error(0)
+}
+
+func (m *mockService) DeleteContent(ctx context.Context, name string) error {
+	args := m.Called(ctx, name)
+	return args.Error(0)
+}
+
+func (m *mockService) GetContent(ctx context.Context, name string) (*v1alpha1.ContentSource, error) {
+	args := m.Called(ctx, name)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*v1alpha1.ContentSource), args.Error(1)
+}
+
+func (m *mockService) ListContent(ctx context.Context) ([]v1alpha1.ContentSource, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]v1alpha1.ContentSource), args.Error(1)
 }
 
 func (m *mockService) ReportEvents(ctx context.Context, batch content.EventBatch) error {
@@ -121,17 +148,17 @@ func TestCreateContent(t *testing.T) {
 				}
 			}
 
-			handler := NewHandler(mockSvc)
+			handler := NewHandler(mockSvc, zerolog.Nop())
 
 			var body []byte
 			if tt.content != nil {
 				body, _ = json.Marshal(tt.content)
 			}
 
-			req := httptest.NewRequest("POST", "/content", bytes.NewReader(body))
+			req := httptest.NewRequest(http.MethodPost, "/content", bytes.NewReader(body))
 			w := httptest.NewRecorder()
 
-			handler.CreateContent(w, req)
+			handler.handleCreateContent(w, req)
 			assert.Equal(t, tt.expectedCode, w.Code)
 			mockSvc.AssertExpectations(t)
 		})
@@ -176,7 +203,7 @@ func TestReportEvents(t *testing.T) {
 				mockSvc.On("ReportEvents", mock.Anything, matchEventBatch(*tt.batch)).Return(tt.serviceError)
 			}
 
-			handler := NewHandler(mockSvc)
+			handler := NewHandler(mockSvc, zerolog.Nop())
 
 			var body []byte
 			if tt.batch != nil {
@@ -186,7 +213,7 @@ func TestReportEvents(t *testing.T) {
 			req := httptest.NewRequest("POST", "/events", bytes.NewReader(body))
 			w := httptest.NewRecorder()
 
-			handler.ReportEvents(w, req)
+			handler.handleReportEvents(w, req)
 			assert.Equal(t, tt.expectedCode, w.Code)
 			mockSvc.AssertExpectations(t)
 		})
@@ -229,7 +256,7 @@ func TestGetURLHealth(t *testing.T) {
 				mockSvc.On("GetURLHealth", mock.Anything, tt.url).Return(tt.mockHealth, tt.mockError)
 			}
 
-			handler := NewHandler(mockSvc)
+			handler := NewHandler(mockSvc, zerolog.Nop())
 
 			req := httptest.NewRequest("GET", "/health/"+tt.url, nil)
 			w := httptest.NewRecorder()
@@ -239,7 +266,7 @@ func TestGetURLHealth(t *testing.T) {
 			rctx.URLParams.Add("url", tt.url)
 			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
-			handler.GetURLHealth(w, req)
+			handler.handleGetURLHealth(w, req)
 			assert.Equal(t, tt.expectedCode, w.Code)
 			mockSvc.AssertExpectations(t)
 
