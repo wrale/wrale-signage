@@ -15,79 +15,25 @@ import (
 func (s *Service) Activate(ctx context.Context, id uuid.UUID) (*display.Display, error) {
 	const op = "DisplayService.Activate"
 
-	s.logger.Info("activating display",
-		"displayID", id,
-		"operation", op,
-	)
-
-	// Get current display state
 	d, err := s.repo.FindByID(ctx, id)
 	if err != nil {
-		if errors.IsNotFound(err) {
-			s.logger.Error("display not found",
-				"error", err,
-				"displayID", id,
-				"operation", op,
-			)
-			return nil, errors.NewError("NOT_FOUND", fmt.Sprintf("Display not found: %s", id), op, err)
-		}
-		s.logger.Error("failed to retrieve display",
-			"error", err,
-			"displayID", id,
-			"operation", op,
-		)
-		return nil, errors.NewError("LOOKUP_FAILED", "Failed to retrieve display", op, err)
+		s.logger.Error("failed to find display", "error", err, "id", id)
+		return nil, errors.NewError("NOT_FOUND", fmt.Sprintf("Display not found: %s", id), op, err)
 	}
 
-	s.logger.Info("found display",
-		"displayID", id,
-		"name", d.Name,
-		"currentState", d.State,
-		"currentVersion", d.Version,
-		"operation", op,
-	)
-
-	// Activate through domain model
+	currentVersion := d.Version
 	if err := d.Activate(); err != nil {
-		s.logger.Error("failed to transition state",
-			"error", err,
-			"displayID", id,
-			"currentState", d.State,
-			"operation", op,
-		)
-		return nil, err // Domain model errors are already properly typed
+		s.logger.Error("failed to activate display", "error", err, "id", id, "state", d.State)
+		return nil, err
 	}
 
-	// Persist changes
+	// Ensure version is properly incremented
+	d.Version = currentVersion
 	if err := s.repo.Save(ctx, d); err != nil {
-		if errors.IsVersionMismatch(err) {
-			s.logger.Error("version conflict during save",
-				"error", err,
-				"displayID", id,
-				"version", d.Version,
-				"operation", op,
-			)
-			return nil, errors.NewError("VERSION_CONFLICT", "Display was modified", op, err)
-		}
-		s.logger.Error("failed to save state change",
-			"error", err,
-			"displayID", id,
-			"newState", d.State,
-			"version", d.Version,
-			"operation", op,
-		)
+		s.logger.Error("failed to save display", "error", err, "id", id)
 		return nil, errors.NewError("SAVE_FAILED", "Failed to save state change", op, err)
 	}
 
-	s.logger.Info("activated display",
-		"displayID", id,
-		"name", d.Name,
-		"newState", d.State,
-		"newVersion", d.Version,
-		"operation", op,
-	)
-
-	// Publish activated event
 	event := display.Event{
 		Type:      display.EventActivated,
 		DisplayID: d.ID,
@@ -99,12 +45,7 @@ func (s *Service) Activate(ctx context.Context, id uuid.UUID) (*display.Display,
 	}
 
 	if err := s.publisher.Publish(ctx, event); err != nil {
-		s.logger.Error("failed to publish event",
-			"error", err,
-			"displayID", id,
-			"eventType", event.Type,
-			"operation", op,
-		)
+		s.logger.Error("failed to publish event", "error", err, "id", id)
 	}
 
 	return d, nil
@@ -114,71 +55,21 @@ func (s *Service) Activate(ctx context.Context, id uuid.UUID) (*display.Display,
 func (s *Service) Disable(ctx context.Context, id uuid.UUID) error {
 	const op = "DisplayService.Disable"
 
-	s.logger.Info("disabling display",
-		"displayID", id,
-		"operation", op,
-	)
-
-	// Get current display state
 	d, err := s.repo.FindByID(ctx, id)
 	if err != nil {
-		if errors.IsNotFound(err) {
-			s.logger.Error("display not found",
-				"error", err,
-				"displayID", id,
-				"operation", op,
-			)
-			return errors.NewError("NOT_FOUND", fmt.Sprintf("Display not found: %s", id), op, err)
-		}
-		s.logger.Error("failed to retrieve display",
-			"error", err,
-			"displayID", id,
-			"operation", op,
-		)
-		return errors.NewError("LOOKUP_FAILED", "Failed to retrieve display", op, err)
+		s.logger.Error("failed to find display", "error", err, "id", id)
+		return errors.NewError("NOT_FOUND", fmt.Sprintf("Display not found: %s", id), op, err)
 	}
 
-	s.logger.Info("found display",
-		"displayID", id,
-		"name", d.Name,
-		"currentState", d.State,
-		"currentVersion", d.Version,
-		"operation", op,
-	)
-
-	// Disable through domain model
+	currentVersion := d.Version
 	d.Disable()
+	d.Version = currentVersion
 
-	// Persist changes
 	if err := s.repo.Save(ctx, d); err != nil {
-		if errors.IsVersionMismatch(err) {
-			s.logger.Error("version conflict during save",
-				"error", err,
-				"displayID", id,
-				"version", d.Version,
-				"operation", op,
-			)
-			return errors.NewError("VERSION_CONFLICT", "Display was modified", op, err)
-		}
-		s.logger.Error("failed to save state change",
-			"error", err,
-			"displayID", id,
-			"newState", d.State,
-			"version", d.Version,
-			"operation", op,
-		)
+		s.logger.Error("failed to save display", "error", err, "id", id)
 		return errors.NewError("SAVE_FAILED", "Failed to save state change", op, err)
 	}
 
-	s.logger.Info("disabled display",
-		"displayID", id,
-		"name", d.Name,
-		"newState", d.State,
-		"newVersion", d.Version,
-		"operation", op,
-	)
-
-	// Publish disabled event
 	event := display.Event{
 		Type:      display.EventDisabled,
 		DisplayID: d.ID,
@@ -190,12 +81,7 @@ func (s *Service) Disable(ctx context.Context, id uuid.UUID) error {
 	}
 
 	if err := s.publisher.Publish(ctx, event); err != nil {
-		s.logger.Error("failed to publish event",
-			"error", err,
-			"displayID", id,
-			"eventType", event.Type,
-			"operation", op,
-		)
+		s.logger.Error("failed to publish event", "error", err, "id", id)
 	}
 
 	return nil
@@ -205,60 +91,20 @@ func (s *Service) Disable(ctx context.Context, id uuid.UUID) error {
 func (s *Service) UpdateLastSeen(ctx context.Context, id uuid.UUID) error {
 	const op = "DisplayService.UpdateLastSeen"
 
-	s.logger.Info("updating last seen timestamp",
-		"displayID", id,
-		"operation", op,
-	)
-
-	// Get current display state
 	d, err := s.repo.FindByID(ctx, id)
 	if err != nil {
-		if errors.IsNotFound(err) {
-			s.logger.Error("display not found",
-				"error", err,
-				"displayID", id,
-				"operation", op,
-			)
-			return errors.NewError("NOT_FOUND", fmt.Sprintf("Display not found: %s", id), op, err)
-		}
-		s.logger.Error("failed to retrieve display",
-			"error", err,
-			"displayID", id,
-			"operation", op,
-		)
-		return errors.NewError("LOOKUP_FAILED", "Failed to retrieve display", op, err)
+		s.logger.Error("failed to find display", "error", err, "id", id)
+		return errors.NewError("NOT_FOUND", fmt.Sprintf("Display not found: %s", id), op, err)
 	}
 
-	// Update timestamp through domain model
+	currentVersion := d.Version
 	d.UpdateLastSeen()
+	d.Version = currentVersion
 
-	// Persist changes with retry on version conflicts
 	if err := s.repo.Save(ctx, d); err != nil {
-		if errors.IsVersionMismatch(err) {
-			s.logger.Error("version conflict during save",
-				"error", err,
-				"displayID", id,
-				"version", d.Version,
-				"operation", op,
-			)
-			return errors.NewError("VERSION_CONFLICT", "Display was modified", op, err)
-		}
-		s.logger.Error("failed to save timestamp update",
-			"error", err,
-			"displayID", id,
-			"version", d.Version,
-			"operation", op,
-		)
+		s.logger.Error("failed to save display", "error", err, "id", id)
 		return errors.NewError("SAVE_FAILED", "Failed to save timestamp update", op, err)
 	}
-
-	s.logger.Info("updated last seen timestamp",
-		"displayID", id,
-		"name", d.Name,
-		"lastSeen", d.LastSeen,
-		"version", d.Version,
-		"operation", op,
-	)
 
 	return nil
 }
