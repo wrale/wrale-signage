@@ -58,10 +58,12 @@ func (h *Handler) ReportEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.service.ReportEvents(r.Context(), &content.EventBatch{
+	eventBatch := content.EventBatch{
 		DisplayID: batch.DisplayID,
 		Events:    convertAPIEvents(batch.Events),
-	}); err != nil {
+	}
+
+	if err := h.service.ReportEvents(r.Context(), eventBatch); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
