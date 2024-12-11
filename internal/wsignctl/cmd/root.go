@@ -65,10 +65,24 @@ func init() {
 // initConfig reads in config file and ENV variables if set
 func initConfig() {
 	var err error
-	cfg, err = config.LoadConfig()
+	// Load config with explicit path from flag
+	cfg, err = config.LoadConfig(cfgFile)
 	if err != nil {
 		fmt.Println("Error loading config:", err)
 		os.Exit(1)
+	}
+
+	// Initialize default context if none exists
+	if cfg.Contexts == nil {
+		cfg.Contexts = make(map[string]*config.Context)
+	}
+	if _, exists := cfg.Contexts["dev"]; !exists {
+		cfg.Contexts["dev"] = &config.Context{
+			Name:   "dev",
+			Server: "http://localhost:8080",
+			Token:  "dev-secret-key",
+		}
+		cfg.CurrentContext = "dev"
 	}
 
 	// Handle command line context override
@@ -78,14 +92,18 @@ func initConfig() {
 		}
 	}
 
-	// Get current context
+	// Ensure we have a current context
+	if cfg.CurrentContext == "" {
+		cfg.CurrentContext = "dev"
+	}
+
 	context, err := cfg.GetCurrentContext()
 	if err != nil {
 		fmt.Printf("Warning: %v\n", err)
 		return
 	}
 
-	// Allow command line flags to override context settings
+	// Command line flags override context settings
 	if server, _ := rootCmd.PersistentFlags().GetString("server"); server != "" {
 		context.Server = server
 	}

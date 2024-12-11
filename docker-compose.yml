@@ -2,17 +2,18 @@ services:
   postgres:
     image: postgres:16-alpine
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: postgres
+      POSTGRES_DB: wrale_test
     volumes:
-      - ./scripts/init-test-db.sh:/docker-entrypoint-initdb.d/init-test-db.sh
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
       timeout: 5s
       retries: 5
 
-  # Add more services as needed (Redis, etc)
+volumes:
+  postgres_data:

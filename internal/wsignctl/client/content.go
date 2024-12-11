@@ -2,85 +2,90 @@ package client
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/wrale/wrale-signage/api/types/v1alpha1"
 )
 
-// AddContentSource creates a new content source in the system. It takes a complete ContentSource
-// object that specifies all required fields including name, URL, and content type.
-// The server will validate the input and ensure the name is unique before creating
-// the content source.
-func (c *Client) AddContentSource(ctx context.Context, source *v1alpha1.ContentSource) error {
-	resp, err := c.doRequest(ctx, "POST", "/api/v1alpha1/content", source)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	return nil
+type Content struct {
+	Name             string            `json:"name"`
+	URL              string            `json:"url"`
+	Type             string            `json:"type"`
+	PlaybackDuration time.Duration     `json:"playbackDuration"`
+	Properties       map[string]string `json:"properties,omitempty"`
 }
 
-// UpdateContentSource updates an existing content source identified by name. The update
-// parameter specifies which fields to modify - only non-nil fields will be updated.
-// This allows for partial updates without affecting other fields.
-func (c *Client) UpdateContentSource(ctx context.Context, name string, update *v1alpha1.ContentSourceUpdate) error {
-	resp, err := c.doRequest(ctx, "PATCH", fmt.Sprintf("/api/v1alpha1/content/%s", name), update)
-	if err != nil {
-		return err
+// CreateContent creates new content with the given configuration
+func (c *Client) CreateContent(ctx context.Context, name, url string, duration time.Duration, contentType string, properties map[string]string) error {
+	request := &v1alpha1.ContentSource{
+		TypeMeta: v1alpha1.TypeMeta{
+			APIVersion: "wrale.io/v1alpha1",
+			Kind:       "ContentSource",
+		},
+		ObjectMeta: v1alpha1.ObjectMeta{
+			Name: name,
+		},
+		Spec: v1alpha1.ContentSourceSpec{
+			URL:              url,
+			Type:             contentType,
+			PlaybackDuration: duration,
+			Properties:       properties,
+		},
 	}
-	defer resp.Body.Close()
-	return nil
+
+	if err := request.Spec.Validate(); err != nil {
+		return fmt.Errorf("invalid content configuration: %w", err)
+	}
+
+	resp, err := c.doRequest(ctx, "POST", "/api/v1alpha1/content", request)
+	if err != nil {
+		return fmt.Errorf("failed to create content: %w", err)
+	}
+	return closeBody(resp.Body, nil)
 }
 
-// RemoveContentSource deletes a content source from the system. If force is false,
-// the operation will fail if any redirect rules reference this content source.
-// Setting force to true will delete the content source and invalidate any
-// referring rules.
-func (c *Client) RemoveContentSource(ctx context.Context, name string, force bool) error {
-	path := fmt.Sprintf("/api/v1alpha1/content/%s", name)
-	if force {
-		path += "?force=true"
+// UpdateContent updates existing content configuration
+func (c *Client) UpdateContent(ctx context.Context, name, url string, duration time.Duration, contentType string, properties map[string]string, remove []string) error {
+	update := v1alpha1.ContentSourceUpdate{
+		Properties: properties,
 	}
-	resp, err := c.doRequest(ctx, "DELETE", path, nil)
+
+	if url != "" {
+		update.URL = &url
+	}
+	if duration != 0 {
+		update.PlaybackDuration = &duration
+	}
+
+	resp, err := c.doRequest(ctx, "PUT", "/api/v1alpha1/content/"+name, update)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to update content: %w", err)
 	}
-	defer resp.Body.Close()
-	return nil
+	return closeBody(resp.Body, nil)
 }
 
-// ListContentSources retrieves all content sources in the system. The results can be
-// filtered server-side by passing query parameters, though this basic implementation
-// returns all sources.
-func (c *Client) ListContentSources(ctx context.Context) ([]v1alpha1.ContentSource, error) {
+// RemoveContent removes content by name
+func (c *Client) RemoveContent(ctx context.Context, name string) error {
+	resp, err := c.doRequest(ctx, "DELETE", "/api/v1alpha1/content/"+name, nil)
+	if err != nil {
+		return fmt.Errorf("failed to remove content: %w", err)
+	}
+	return closeBody(resp.Body, nil)
+}
+
+// ListContent retrieves all content sources
+func (c *Client) ListContent(ctx context.Context) ([]v1alpha1.ContentSource, error) {
 	resp, err := c.doRequest(ctx, "GET", "/api/v1alpha1/content", nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to list content: %w", err)
 	}
 	defer resp.Body.Close()
 
 	var list v1alpha1.ContentSourceList
-	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
-		return nil, fmt.Errorf("error decoding response: %w", err)
+	if err := decodeResponse(resp, &list); err != nil {
+		return nil, err
 	}
 
 	return list.Items, nil
-}
-
-// GetContentSource retrieves a single content source by name. Returns an error
-// if the content source doesn't exist.
-func (c *Client) GetContentSource(ctx context.Context, name string) (*v1alpha1.ContentSource, error) {
-	resp, err := c.doRequest(ctx, "GET", fmt.Sprintf("/api/v1alpha1/content/%s", name), nil)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var source v1alpha1.ContentSource
-	if err := json.NewDecoder(resp.Body).Decode(&source); err != nil {
-		return nil, fmt.Errorf("error decoding response: %w", err)
-	}
-
-	return &source, nil
 }

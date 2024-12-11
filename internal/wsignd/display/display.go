@@ -38,6 +38,8 @@ type Display struct {
 	Version int
 	// Properties contains arbitrary key-value pairs for display metadata
 	Properties map[string]string
+	// ActivationCode holds the display's initial setup code
+	ActivationCode string
 }
 
 // Location represents where a display is physically located
@@ -53,10 +55,10 @@ type Location struct {
 // NewDisplay creates a new display with the given name and location
 func NewDisplay(name string, location Location) (*Display, error) {
 	if name == "" {
-		return nil, fmt.Errorf("display name cannot be empty")
+		return nil, ErrInvalidName{Name: name, Reason: "display name cannot be empty"}
 	}
 	if location.SiteID == "" {
-		return nil, fmt.Errorf("site ID cannot be empty")
+		return nil, ErrInvalidLocation{Reason: "site ID cannot be empty"}
 	}
 
 	return &Display{
@@ -65,7 +67,7 @@ func NewDisplay(name string, location Location) (*Display, error) {
 		Location:   location,
 		State:      StateUnregistered,
 		LastSeen:   time.Now(),
-		Version:    1,
+		Version:    0, // Start at 0 for insert
 		Properties: make(map[string]string),
 	}, nil
 }
@@ -73,7 +75,7 @@ func NewDisplay(name string, location Location) (*Display, error) {
 // Activate transitions the display to the active state
 func (d *Display) Activate() error {
 	if d.State == StateDisabled {
-		return fmt.Errorf("cannot activate disabled display")
+		return ErrInvalidState{Current: d.State, Target: StateActive}
 	}
 	d.State = StateActive
 	d.Version++
@@ -95,7 +97,7 @@ func (d *Display) UpdateLastSeen() {
 // UpdateLocation updates the display's physical location
 func (d *Display) UpdateLocation(location Location) error {
 	if location.SiteID == "" {
-		return fmt.Errorf("site ID cannot be empty")
+		return ErrInvalidLocation{Reason: "site ID cannot be empty"}
 	}
 	d.Location = location
 	d.Version++
@@ -108,5 +110,23 @@ func (d *Display) SetProperty(key, value string) {
 		d.Properties = make(map[string]string)
 	}
 	d.Properties[key] = value
+	d.Version++
+}
+
+// ValidateActivationCode checks if the given code matches this display
+func (d *Display) ValidateActivationCode(code string) error {
+	// An empty code means no validation needed yet
+	if d.ActivationCode == "" {
+		return nil
+	}
+	if code != d.ActivationCode {
+		return fmt.Errorf("invalid activation code")
+	}
+	return nil
+}
+
+// SetActivationCode sets the display's activation code
+func (d *Display) SetActivationCode(code string) {
+	d.ActivationCode = code
 	d.Version++
 }

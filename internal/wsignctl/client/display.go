@@ -70,14 +70,64 @@ func (c *Client) ListDisplays(ctx context.Context, selector v1alpha1.DisplaySele
 	return displays, closeBody(resp.Body, nil)
 }
 
-// CreateDisplay creates a new display
+// CreateDisplay creates a new display with the given name and configuration
 func (c *Client) CreateDisplay(ctx context.Context, name string, display *v1alpha1.Display) error {
-	display.Name = name
 	resp, err := c.doRequest(ctx, http.MethodPost, "/api/v1alpha1/displays", display)
 	if err != nil {
 		return fmt.Errorf("failed to create display: %w", err)
 	}
+	defer resp.Body.Close()
+
 	return closeBody(resp.Body, nil)
+}
+
+// ActivateDisplay activates a display using its registration information
+func (c *Client) ActivateDisplay(ctx context.Context, req *v1alpha1.DisplayRegistrationRequest) (*v1alpha1.Display, error) {
+	// First try to find existing display
+	resp, err := c.doRequest(ctx, http.MethodGet, "/api/v1alpha1/displays/"+req.Name, nil)
+	if err == nil {
+		defer resp.Body.Close()
+		var display v1alpha1.Display
+		if err := decodeResponse(resp, &display); err != nil {
+			return nil, closeBody(resp.Body, fmt.Errorf("failed to decode display: %w", err))
+		}
+		// Display exists, activate it
+		activateResp, err := c.doRequest(ctx, http.MethodPut, fmt.Sprintf("/api/v1alpha1/displays/%s/activate", display.ObjectMeta.ID), nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to activate display: %w", err)
+		}
+		defer activateResp.Body.Close()
+		if err := decodeResponse(activateResp, &display); err != nil {
+			return nil, closeBody(activateResp.Body, fmt.Errorf("failed to decode activation response: %w", err))
+		}
+		return &display, nil
+	}
+
+	// Display doesn't exist, register it first
+	regResp, err := c.doRequest(ctx, http.MethodPost, "/api/v1alpha1/displays", req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to register display: %w", err)
+	}
+	defer regResp.Body.Close()
+
+	var regResult v1alpha1.DisplayRegistrationResponse
+	if err := decodeResponse(regResp, &regResult); err != nil {
+		return nil, closeBody(regResp.Body, fmt.Errorf("failed to decode registration response: %w", err))
+	}
+
+	// Now activate the registered display
+	activateResp, err := c.doRequest(ctx, http.MethodPut, fmt.Sprintf("/api/v1alpha1/displays/%s/activate", regResult.Display.ObjectMeta.ID), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to activate display: %w", err)
+	}
+	defer activateResp.Body.Close()
+
+	var activated v1alpha1.Display
+	if err := decodeResponse(activateResp, &activated); err != nil {
+		return nil, closeBody(activateResp.Body, fmt.Errorf("failed to decode activation response: %w", err))
+	}
+
+	return &activated, nil
 }
 
 // UpdateDisplay updates an existing display's location and properties
@@ -101,20 +151,4 @@ func (c *Client) DeleteDisplay(ctx context.Context, name string) error {
 		return fmt.Errorf("failed to delete display: %w", err)
 	}
 	return closeBody(resp.Body, nil)
-}
-
-// ActivateDisplay activates a display using its registration information
-func (c *Client) ActivateDisplay(ctx context.Context, req *v1alpha1.DisplayRegistrationRequest) (*v1alpha1.Display, error) {
-	resp, err := c.doRequest(ctx, http.MethodPost, "/api/v1alpha1/displays/activate", req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to activate display: %w", err)
-	}
-	defer resp.Body.Close()
-
-	var result v1alpha1.DisplayRegistrationResponse
-	if err := decodeResponse(resp, &result); err != nil {
-		return nil, closeBody(resp.Body, err)
-	}
-
-	return result.Display, closeBody(resp.Body, nil)
 }

@@ -2,65 +2,63 @@ package content
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/wrale/wrale-signage/internal/wsignctl/util"
 )
 
-func newListCmd() *cobra.Command {
+func newListCommand() *cobra.Command {
 	var output string
 
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List content sources",
-		Long: `List all configured content sources.
-
-This shows where displays can be redirected to fetch content from.`,
 		Example: `  # List all content sources
   wsignctl content list
-  
-  # Show detailed JSON output
+
+  # Show content sources in JSON format
   wsignctl content list -o json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := util.GetClientFromCommand(cmd)
+			client, err := util.GetClientFromCommand(cmd)
 			if err != nil {
 				return err
 			}
 
-			sources, err := c.ListContentSources(cmd.Context())
+			content, err := client.ListContent(cmd.Context())
 			if err != nil {
-				return fmt.Errorf("error listing content sources: %w", err)
+				return fmt.Errorf("error listing content: %w", err)
 			}
 
-			switch output {
-			case "json":
-				return util.PrintJSON(cmd.OutOrStdout(), sources)
+			if output == "json" {
+				return util.PrintJSON(cmd.OutOrStdout(), content)
+			}
 
-			default:
-				tw := util.NewTabWriter(cmd.OutOrStdout())
-				defer tw.Flush()
+			// Table output
+			fmt.Fprintln(cmd.OutOrStdout(), "\nContent Sources:")
+			fmt.Fprintln(cmd.OutOrStdout(), strings.Repeat("-", 80))
+			fmt.Fprintf(cmd.OutOrStdout(), "%-20s %-10s %-15s %s\n", "NAME", "TYPE", "DURATION", "URL")
+			fmt.Fprintln(cmd.OutOrStdout(), strings.Repeat("-", 80))
 
-				// Print header
-				fmt.Fprintf(tw, "NAME\tURL\tTYPE\tPROPERTIES\tLAST VALIDATED\tHASH\n")
-
-				// Print each source
-				for _, s := range sources {
-					fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
-						s.Name,
-						s.Spec.URL,
-						s.Spec.Type,
-						util.FormatProperties(s.Spec.Properties),
-						s.Status.LastValidated.Format("2006-01-02 15:04:05"),
-						s.Status.Hash,
-					)
+			for _, c := range content {
+				duration := c.Spec.PlaybackDuration.String()
+				if c.Spec.PlaybackDuration == 0 {
+					duration = "auto"
 				}
+
+				fmt.Fprintf(cmd.OutOrStdout(), "%-20s %-10s %-15s %s\n",
+					c.ObjectMeta.Name,
+					c.Spec.Type,
+					duration,
+					c.Spec.URL,
+				)
 			}
+			fmt.Fprintln(cmd.OutOrStdout(), strings.Repeat("-", 80))
 
 			return nil
 		},
 	}
 
-	cmd.Flags().StringVarP(&output, "output", "o", "table", "Output format (table, json)")
-
+	cmd.Flags().StringVarP(&output, "output", "o", "", "Output format (json)")
 	return cmd
 }

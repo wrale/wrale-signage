@@ -5,10 +5,12 @@ Wrale Signage aims to be an open-source digital signage management system with a
 ## Current Status
 
 Basic functionality is implemented:
-- Display registration and management via CLI
-- Content event tracking in PostgreSQL
+- Display registration and activation via human-readable codes
+- CLI-based display management and control
+- Content event tracking in PostgreSQL 
 - Basic health monitoring
 - Web interface for display simulation
+- OAuth 2.0 Device Authorization Flow for easy setup
 
 ## Project Structure
 

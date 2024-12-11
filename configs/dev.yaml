@@ -1,0 +1,26 @@
+server:
+  host: localhost
+  port: 8080
+  readTimeout: 5s
+  writeTimeout: 10s
+  idleTimeout: 120s
+
+database:
+  host: localhost
+  port: 5432
+  name: wrale_test
+  user: postgres
+  password: postgres
+  sslmode: disable
+  maxOpenConns: 25
+  maxIdleConns: 25
+  connMaxLifetime: 5m
+
+auth:
+  tokenExpiry: 1h
+  deviceCodeExpiry: 15m
+
+content:
+  storagePath: ./storage/content
+  maxCacheSize: 1073741824  # 1GB
+  defaultTTL: 1h

@@ -1,23 +1,20 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ArrowLeft, ArrowRight, RotateCcw, Home, Search } from 'lucide-react';
-import { ContentSequence } from '../types';
 import { ContentController } from './ContentController';
+import { ArrowLeft, ArrowRight, RotateCcw, Home, Search } from 'lucide-react';
 
 interface NavigationState {
   path: string;
   title: string;
 }
 
-const BrowserInterface: React.FC<{
-  displayId: string;
-  controlURL: string;
-}> = ({ displayId, controlURL }) => {
+const BrowserInterface: React.FC = () => {
   const [currentPath, setCurrentPath] = useState<string>('/page1.html');
   const [history, setHistory] = useState<NavigationState[]>([{ path: '/page1.html', title: 'Page 1' }]);
   const [historyIndex, setHistoryIndex] = useState<number>(0);
   const [isTransitioning, setIsTransitioning] = useState<boolean>(false);
+  const [displayId, setDisplayId] = useState<string>('');
   const iframeRef = useRef<HTMLIFrameElement>(null);
-
+  
   const handlePathChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setCurrentPath(e.target.value);
   };
@@ -31,16 +28,17 @@ const BrowserInterface: React.FC<{
     setIsTransitioning(true);
     const formattedPath = path.startsWith('/') ? path : `/${path}`;
     setCurrentPath(formattedPath);
-
+    
     const newHistory = history.slice(0, historyIndex + 1);
     newHistory.push({ path: formattedPath, title: formattedPath });
     setHistory(newHistory);
     setHistoryIndex(newHistory.length - 1);
-
+    
     if (iframeRef.current) {
       iframeRef.current.src = formattedPath;
     }
 
+    // Reset transition after animation completes
     setTimeout(() => {
       setIsTransitioning(false);
     }, 500);
@@ -78,23 +76,15 @@ const BrowserInterface: React.FC<{
     navigateToPath('/page1.html');
   };
 
-  // Handle control messages
-  const handleSequenceUpdate = (sequence: ContentSequence) => {
-    if (sequence.items.length > 0) {
-      navigateToPath(sequence.items[0].url);
-    }
-  };
-
-  const handleReloadRequired = () => {
-    window.location.reload();
-  };
-
   // Handle messages from iframe content
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       if (event.origin === window.location.origin) {
         if (event.data.type === 'navigation' && event.data.path) {
           navigateToPath(event.data.path);
+        }
+        if (event.data.type === 'DISPLAY_ACTIVATED' && event.data.id) {
+          setDisplayId(event.data.id);
         }
       }
     };
@@ -103,11 +93,21 @@ const BrowserInterface: React.FC<{
     return () => window.removeEventListener('message', handleMessage);
   }, [historyIndex]);
 
+  const handleSequenceUpdate = () => {
+    // TODO: Handle content sequence updates
+  };
+
+  const handleReload = () => {
+    refresh();
+  };
+
+  const wsURL = `ws://${window.location.host}/api/v1alpha1/displays/ws`;
+
   return (
     <div className="flex flex-col w-full h-screen bg-gray-100">
       <div className="bg-white shadow-md p-4">
         <div className="flex items-center gap-2 mb-2">
-          <button
+          <button 
             onClick={goBack}
             disabled={historyIndex === 0}
             className="p-2 rounded hover:bg-gray-100 disabled:opacity-50"
@@ -115,7 +115,7 @@ const BrowserInterface: React.FC<{
           >
             <ArrowLeft size={20} />
           </button>
-          <button
+          <button 
             onClick={goForward}
             disabled={historyIndex === history.length - 1}
             className="p-2 rounded hover:bg-gray-100 disabled:opacity-50"
@@ -123,21 +123,21 @@ const BrowserInterface: React.FC<{
           >
             <ArrowRight size={20} />
           </button>
-          <button
+          <button 
             onClick={refresh}
             className="p-2 rounded hover:bg-gray-100"
             aria-label="Refresh page"
           >
             <RotateCcw size={20} />
           </button>
-          <button
+          <button 
             onClick={goHome}
             className="p-2 rounded hover:bg-gray-100"
             aria-label="Go home"
           >
             <Home size={20} />
           </button>
-
+          
           <form onSubmit={handleSubmit} className="flex-1 flex items-center">
             <div className="relative flex-1">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -165,12 +165,14 @@ const BrowserInterface: React.FC<{
         />
       </div>
 
-      <ContentController
-        displayId={displayId}
-        wsURL={controlURL}
-        onSequenceUpdate={handleSequenceUpdate}
-        onReloadRequired={handleReloadRequired}
-      />
+      {displayId && (
+        <ContentController
+          displayId={displayId}
+          wsURL={wsURL}
+          onSequenceUpdate={handleSequenceUpdate}
+          onReloadRequired={handleReload}
+        />
+      )}
     </div>
   );
 };

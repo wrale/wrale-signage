@@ -43,6 +43,9 @@ type Service interface {
 	// Get retrieves a display by ID
 	Get(ctx context.Context, id uuid.UUID) (*Display, error)
 
+	// GetByName retrieves a display by name
+	GetByName(ctx context.Context, name string) (*Display, error)
+
 	// List retrieves displays matching the filter
 	List(ctx context.Context, filter DisplayFilter) ([]*Display, error)
 
@@ -50,7 +53,7 @@ type Service interface {
 	UpdateLocation(ctx context.Context, id uuid.UUID, location Location) error
 
 	// Activate transitions a display to the active state
-	Activate(ctx context.Context, id uuid.UUID) error
+	Activate(ctx context.Context, id uuid.UUID) (*Display, error)
 
 	// Disable transitions a display to the disabled state
 	Disable(ctx context.Context, id uuid.UUID) error

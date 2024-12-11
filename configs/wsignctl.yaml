@@ -1,0 +1,6 @@
+contexts:
+  dev:
+    server: http://localhost:8080
+    token: dev-secret-key
+    insecure-skip-verify: false
+current-context: dev

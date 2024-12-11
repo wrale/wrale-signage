@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -16,32 +17,64 @@ import (
 	_ "github.com/lib/pq"
 
 	"github.com/wrale/wrale-signage/internal/wsignd/config"
-	"github.com/wrale/wrale-signage/internal/wsignd/display"
+	"github.com/wrale/wrale-signage/internal/wsignd/content"
+	contenthttp "github.com/wrale/wrale-signage/internal/wsignd/content/http"
+	contentpg "github.com/wrale/wrale-signage/internal/wsignd/content/postgres"
+	"github.com/wrale/wrale-signage/internal/wsignd/database"
+	"github.com/wrale/wrale-signage/internal/wsignd/display/activation"
+	activationpg "github.com/wrale/wrale-signage/internal/wsignd/display/activation/postgres"
 	displayhttp "github.com/wrale/wrale-signage/internal/wsignd/display/http"
-	"github.com/wrale/wrale-signage/internal/wsignd/display/postgres"
+	displaypg "github.com/wrale/wrale-signage/internal/wsignd/display/postgres"
+	"github.com/wrale/wrale-signage/internal/wsignd/display/service"
 )
 
 func main() {
-	// Initialize structured logging with JSON format for easier parsing
+	// Parse command line flags
+	configPath := flag.String("config", "", "path to config file")
+	flag.Parse()
+
+	// Initialize structured logging
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
 
-	// Load configuration from environment variables, with validation
-	cfg, err := config.Load()
-	if err != nil {
-		logger.Error("failed to load configuration", "error", err)
-		os.Exit(1)
+	// Load configuration
+	var cfg *config.Config
+	var err error
+
+	if *configPath != "" {
+		cfg, err = config.LoadFile(*configPath)
+		if err != nil {
+			logger.Error("failed to load config file", "error", err)
+			os.Exit(1)
+		}
+	} else {
+		cfg, err = config.Load()
+		if err != nil {
+			logger.Error("failed to load configuration", "error", err)
+			os.Exit(1)
+		}
 	}
 
-	// Establish database connection with proper connection pooling
-	db, err := setupDatabase(cfg.Database)
+	// Build connection string
+	connStr := fmt.Sprintf(
+		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+		cfg.Database.Host,
+		cfg.Database.Port,
+		cfg.Database.User,
+		cfg.Database.Password,
+		cfg.Database.Name,
+		cfg.Database.SSLMode,
+	)
+
+	// Setup database and run migrations
+	db, err := database.SetupDatabase(connStr, 5, time.Second)
 	if err != nil {
-		logger.Error("failed to connect to database", "error", err)
+		logger.Error("failed to setup database", "error", err)
 		os.Exit(1)
 	}
 	defer db.Close()
 
-	// Create HTTP server with timeouts and configuration
+	// Create HTTP server
 	server := &http.Server{
 		Addr:         fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
 		Handler:      setupRouter(cfg, db, logger),
@@ -50,14 +83,13 @@ func main() {
 		IdleTimeout:  cfg.Server.IdleTimeout,
 	}
 
-	// Start the server in a goroutine to allow for graceful shutdown
+	// Start server
 	go func() {
 		logger.Info("starting server",
 			"host", cfg.Server.Host,
 			"port", cfg.Server.Port,
 		)
 
-		var err error
 		if cfg.Server.TLSCert != "" && cfg.Server.TLSKey != "" {
 			err = server.ListenAndServeTLS(cfg.Server.TLSCert, cfg.Server.TLSKey)
 		} else {
@@ -69,19 +101,16 @@ func main() {
 		}
 	}()
 
-	// Set up graceful shutdown on interrupt signals
+	// Handle shutdown
 	shutdown := make(chan os.Signal, 1)
 	signal.Notify(shutdown, os.Interrupt, syscall.SIGTERM)
 
-	// Wait for interrupt signal
 	<-shutdown
 	logger.Info("shutting down server...")
 
-	// Create shutdown context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Attempt graceful shutdown
 	if err := server.Shutdown(ctx); err != nil {
 		logger.Error("server shutdown error", "error", err)
 	}
@@ -89,60 +118,57 @@ func main() {
 	logger.Info("server stopped")
 }
 
-// setupDatabase creates a database connection pool with proper configuration
-func setupDatabase(cfg config.DatabaseConfig) (*sql.DB, error) {
-	// Build Postgres connection string with all parameters
-	connStr := fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-		cfg.Host,
-		cfg.Port,
-		cfg.User,
-		cfg.Password,
-		cfg.Name,
-		cfg.SSLMode,
-	)
-
-	// Open database connection
-	db, err := sql.Open("postgres", connStr)
-	if err != nil {
-		return nil, fmt.Errorf("error opening database: %w", err)
-	}
-
-	// Configure connection pool
-	db.SetMaxOpenConns(cfg.MaxOpenConns)
-	db.SetMaxIdleConns(cfg.MaxIdleConns)
-	db.SetConnMaxLifetime(cfg.ConnMaxLifetime)
-
-	// Verify connection is working
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := db.PingContext(ctx); err != nil {
-		return nil, fmt.Errorf("error connecting to database: %w", err)
-	}
-
-	return db, nil
-}
-
-// setupRouter creates and configures the HTTP router with all application routes
 func setupRouter(cfg *config.Config, db *sql.DB, logger *slog.Logger) http.Handler {
 	r := chi.NewRouter()
 
-	// Set up display service dependencies
-	repo := postgres.NewRepository(db)
-	publisher := &noopEventPublisher{} // TODO: Implement real event publisher
-	service := display.NewService(repo, publisher)
+	// Set up display service
+	displayRepo := displaypg.NewRepository(db, logger)
+	displayPublisher := service.NewNoopEventPublisher()
+	displayService := service.New(displayRepo, displayPublisher, logger)
 
-	// Create and mount display handlers
-	displayHandler := displayhttp.NewHandler(service, logger)
-	r.Mount("/", displayhttp.NewRouter(displayHandler))
+	// Set up activation service
+	activationRepo := activationpg.NewRepository(db, logger)
+	activationService := activation.NewService(activationRepo)
+
+	// Create display handler
+	displayHandler := displayhttp.NewHandler(displayService, activationService, logger)
+	r.Mount("/", displayHandler.Router())
+
+	// Set up content service
+	contentRepo := contentpg.NewRepository(db)
+	contentProcessor := &noopEventProcessor{}
+	contentMetrics := &noopMetricsAggregator{}
+	contentMonitor := &noopHealthMonitor{}
+	contentService := content.NewService(contentRepo, contentProcessor, contentMetrics, contentMonitor)
+
+	// Create content handler
+	contentHandler := contenthttp.NewHandler(contentService)
+	r.Mount("/api/v1alpha1/content", contentHandler.Router())
 
 	return r
 }
 
-// noopEventPublisher is a temporary implementation of display.EventPublisher
-type noopEventPublisher struct{}
+// Content no-op implementations
+type noopEventProcessor struct{}
 
-func (p *noopEventPublisher) Publish(ctx context.Context, event display.Event) error {
+func (p *noopEventProcessor) ProcessEvents(ctx context.Context, batch content.EventBatch) error {
 	return nil
+}
+
+type noopMetricsAggregator struct{}
+
+func (m *noopMetricsAggregator) RecordMetrics(ctx context.Context, event content.Event) error {
+	return nil
+}
+func (m *noopMetricsAggregator) GetURLMetrics(ctx context.Context, url string) (*content.URLMetrics, error) {
+	return &content.URLMetrics{URL: url}, nil
+}
+
+type noopHealthMonitor struct{}
+
+func (h *noopHealthMonitor) CheckHealth(ctx context.Context, url string) (*content.HealthStatus, error) {
+	return &content.HealthStatus{URL: url, Healthy: true}, nil
+}
+func (h *noopHealthMonitor) GetHealthHistory(ctx context.Context, url string) ([]content.HealthStatus, error) {
+	return []content.HealthStatus{}, nil
 }

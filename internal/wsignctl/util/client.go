@@ -47,12 +47,16 @@ func getClientConfig(cmd *cobra.Command) (*clientConfig, error) {
 	cfg := &clientConfig{}
 
 	// Try command flags first if available
+	var configPath string
 	if cmd != nil {
 		if server, err := cmd.Flags().GetString("server"); err == nil && server != "" {
 			cfg.apiURL = server
 		}
 		if token, err := cmd.Flags().GetString("token"); err == nil && token != "" {
 			cfg.token = token
+		}
+		if path, err := cmd.Flags().GetString("config"); err == nil {
+			configPath = path
 		}
 	}
 
@@ -66,7 +70,7 @@ func getClientConfig(cmd *cobra.Command) (*clientConfig, error) {
 
 	// If still missing values, try config file
 	if cfg.apiURL == "" || cfg.token == "" {
-		fileCfg, err := config.LoadConfig()
+		fileCfg, err := config.LoadConfig(configPath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load config: %w", err)
 		}
