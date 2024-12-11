@@ -2,8 +2,10 @@
 package service
 
 import (
+	"context"
 	"log/slog"
 
+	"github.com/google/uuid"
 	"github.com/wrale/wrale-signage/internal/wsignd/display"
 )
 
@@ -21,4 +23,14 @@ func New(repo display.Repository, publisher display.EventPublisher, logger *slog
 		publisher: publisher,
 		logger:    logger,
 	}
+}
+
+// Get retrieves a display by ID
+func (s *Service) Get(ctx context.Context, id uuid.UUID) (*display.Display, error) {
+	return s.repo.FindByID(ctx, id)
+}
+
+// GetByName retrieves a display by name
+func (s *Service) GetByName(ctx context.Context, name string) (*display.Display, error) {
+	return s.repo.FindByName(ctx, name)
 }

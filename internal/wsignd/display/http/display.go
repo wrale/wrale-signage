@@ -8,30 +8,35 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
 	"github.com/wrale/wrale-signage/api/types/v1alpha1"
+	"github.com/wrale/wrale-signage/internal/wsignd/display"
 	werrors "github.com/wrale/wrale-signage/internal/wsignd/errors"
 )
 
-// GetDisplay handles requests to get display status
+// GetDisplay handles requests to get display status by ID or name
 func (h *Handler) GetDisplay(w http.ResponseWriter, r *http.Request) {
 	reqID := middleware.GetReqID(r.Context())
 	idStr := chi.URLParam(r, "id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		h.logger.Error("invalid display ID",
-			"error", err,
+
+	// Try UUID first
+	var d *display.Display
+	var err error
+
+	if id, err := uuid.Parse(idStr); err == nil {
+		d, err = h.service.Get(r.Context(), id)
+	} else {
+		// Fallback to name lookup
+		h.logger.Info("ID not UUID, trying name lookup",
 			"requestID", reqID,
-			"id", idStr,
+			"name", idStr,
 		)
-		h.writeError(w, werrors.NewError("INVALID_INPUT", "invalid display ID", "GetDisplay", err), http.StatusBadRequest)
-		return
+		d, err = h.service.GetByName(r.Context(), idStr)
 	}
 
-	d, err := h.service.Get(r.Context(), id)
 	if err != nil {
 		h.logger.Error("failed to get display",
 			"error", err,
 			"requestID", reqID,
-			"id", id,
+			"id", idStr,
 		)
 		h.writeError(w, err, http.StatusInternalServerError)
 		return
