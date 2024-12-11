@@ -10,7 +10,14 @@ import (
 
 // Service defines the content service interface
 type Service interface {
+	// Content management
 	CreateContent(ctx context.Context, content *v1alpha1.ContentSource) error
+	UpdateContent(ctx context.Context, content *v1alpha1.ContentSource) error
+	DeleteContent(ctx context.Context, name string) error
+	GetContent(ctx context.Context, name string) (*v1alpha1.ContentSource, error)
+	ListContent(ctx context.Context) ([]v1alpha1.ContentSource, error)
+
+	// Content monitoring
 	ReportEvents(ctx context.Context, batch EventBatch) error
 	GetURLHealth(ctx context.Context, url string) (*HealthStatus, error)
 	GetURLMetrics(ctx context.Context, url string) (*URLMetrics, error)
@@ -19,6 +26,10 @@ type Service interface {
 
 type Repository interface {
 	CreateContent(ctx context.Context, content *v1alpha1.ContentSource) error
+	UpdateContent(ctx context.Context, content *v1alpha1.ContentSource) error
+	DeleteContent(ctx context.Context, name string) error
+	GetContent(ctx context.Context, name string) (*v1alpha1.ContentSource, error)
+	ListContent(ctx context.Context) ([]v1alpha1.ContentSource, error)
 	SaveEvent(ctx context.Context, event Event) error
 	GetURLMetrics(ctx context.Context, url string, since time.Time) (*URLMetrics, error)
 	GetDisplayEvents(ctx context.Context, displayID uuid.UUID, since time.Time) ([]Event, error)
