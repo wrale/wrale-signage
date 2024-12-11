@@ -8,20 +8,23 @@ import (
 	"log/slog"
 
 	"github.com/wrale/wrale-signage/internal/wsignd/display"
+	"github.com/wrale/wrale-signage/internal/wsignd/display/activation"
 )
 
 // Handler implements HTTP handlers for display management
 type Handler struct {
-	service display.Service
-	logger  *slog.Logger
-	hub     *Hub
+	service    display.Service
+	activation activation.Service
+	logger     *slog.Logger
+	hub        *Hub
 }
 
 // NewHandler creates a new display HTTP handler
-func NewHandler(service display.Service, logger *slog.Logger) *Handler {
+func NewHandler(service display.Service, activation activation.Service, logger *slog.Logger) *Handler {
 	h := &Handler{
-		service: service,
-		logger:  logger,
+		service:    service,
+		activation: activation,
+		logger:     logger,
 	}
 	h.hub = newHub(logger)
 	go h.hub.run(context.Background()) // TODO: manage lifecycle with context
@@ -41,6 +44,11 @@ func (h *Handler) Router() *chi.Mux {
 
 	// API Routes v1alpha1
 	r.Route("/api/v1alpha1/displays", func(r chi.Router) {
+		// Device activation flow
+		r.Post("/device/code", h.RequestDeviceCode)
+		r.Post("/activate", h.ActivateDeviceCode)
+
+		// Display registration and management
 		r.Post("/", h.RegisterDisplay)
 		r.Route("/{id}", func(r chi.Router) {
 			r.Get("/", h.GetDisplay)
