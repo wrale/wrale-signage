@@ -22,40 +22,43 @@ func NewRepository(db *sql.DB) *repository {
 func (r *repository) SaveEvent(ctx context.Context, event content.Event) error {
 	const op = "ContentRepository.SaveEvent"
 
-	var metrics []byte
+	var metrics map[string]interface{}
 	if event.Metrics != nil {
-		var err error
-		metrics, err = json.Marshal(event.Metrics)
-		if err != nil {
-			return database.MapError(err, op)
+		metrics = map[string]interface{}{
+			"loadTime":        event.Metrics.LoadTime,
+			"renderTime":      event.Metrics.RenderTime,
+			"interactiveTime": event.Metrics.InteractiveTime,
 		}
-	} else {
-		metrics = []byte("{}")
+		if event.Metrics.ResourceStats != nil {
+			metrics["resourceStats"] = event.Metrics.ResourceStats
+		}
+	}
+	metricsJSON, err := json.Marshal(metrics)
+	if err != nil {
+		return database.MapError(err, op)
 	}
 
-	var errorJSON []byte
+	var errorData map[string]interface{}
 	if event.Error != nil {
-		var err error
-		errorJSON, err = json.Marshal(event.Error)
-		if err != nil {
-			return database.MapError(err, op)
+		errorData = map[string]interface{}{
+			"code":    event.Error.Code,
+			"message": event.Error.Message,
 		}
-	} else {
-		errorJSON = []byte("null")
+		if event.Error.Details != nil {
+			errorData["details"] = event.Error.Details
+		}
+	}
+	errorJSON, err := json.Marshal(errorData)
+	if err != nil {
+		return database.MapError(err, op)
 	}
 
-	var contextJSON []byte
-	if event.Context != nil {
-		var err error
-		contextJSON, err = json.Marshal(event.Context)
-		if err != nil {
-			return database.MapError(err, op)
-		}
-	} else {
-		contextJSON = []byte("{}")
+	contextJSON, err := json.Marshal(event.Context)
+	if err != nil {
+		return database.MapError(err, op)
 	}
 
-	err := database.RunInTx(ctx, r.db, nil, func(tx *database.Tx) error {
+	err = database.RunInTx(ctx, r.db, nil, func(tx *database.Tx) error {
 		// Verify display exists
 		var exists bool
 		err := tx.QueryRowContext(ctx,
@@ -82,7 +85,7 @@ func (r *repository) SaveEvent(ctx context.Context, event content.Event) error {
 			event.URL,
 			event.Timestamp,
 			errorJSON,
-			metrics,
+			metricsJSON,
 			contextJSON,
 		)
 		return err
@@ -130,33 +133,37 @@ func (r *repository) GetURLMetrics(ctx context.Context, url string, since time.T
 			return err
 		}
 
-		// Get average timing metrics using proper JSONB validation
+		// Get average timing metrics
 		err = tx.QueryRowContext(ctx, `
-			WITH valid_events AS (
-				SELECT *
-				FROM content_events
+			WITH valid_metrics AS (
+				SELECT 
+					(metrics->>'loadTime')::float8 as load_time,
+					(metrics->>'renderTime')::float8 as render_time
+				FROM content_events 
 				WHERE url = $1 
 					AND timestamp >= $2
 					AND type = 'CONTENT_LOADED'
 					AND metrics IS NOT NULL
-					AND metrics ? 'loadTime'
+					AND metrics ? 'loadTime' 
 					AND metrics ? 'renderTime'
 					AND jsonb_typeof(metrics->'loadTime') = 'number'
 					AND jsonb_typeof(metrics->'renderTime') = 'number'
 			)
 			SELECT 
-				COALESCE(AVG((metrics->>'loadTime')::numeric), 0)::float8,
-				COALESCE(AVG((metrics->>'renderTime')::numeric), 0)::float8
-			FROM valid_events
+				COALESCE(AVG(load_time), 0),
+				COALESCE(AVG(render_time), 0)
+			FROM valid_metrics
 		`, url, since).Scan(&metrics.AvgLoadTime, &metrics.AvgRenderTime)
 		if err != nil && err != sql.ErrNoRows {
 			return err
 		}
 
-		// Get error rates with proper CTE structure
+		// Get error rates
 		rows, err := tx.QueryContext(ctx, `
-			WITH valid_errors AS (
-				SELECT *
+			WITH error_counts AS (
+				SELECT 
+					error->>'code' as error_code,
+					COUNT(*) as code_count
 				FROM content_events
 				WHERE url = $1 
 					AND timestamp >= $2
@@ -164,24 +171,17 @@ func (r *repository) GetURLMetrics(ctx context.Context, url string, since time.T
 					AND error IS NOT NULL
 					AND error ? 'code'
 					AND jsonb_typeof(error->'code') = 'string'
-			),
-			error_counts AS (
-				SELECT 
-					error->>'code' as error_code,
-					COUNT(*) as code_count
-				FROM valid_errors
 				GROUP BY error->>'code'
 			),
 			total AS (
-				SELECT COUNT(*)::numeric as total_count
+				SELECT COUNT(*)::float8 as total_count
 				FROM content_events 
 				WHERE url = $1 AND timestamp >= $2
 			)
 			SELECT 
 				error_code,
-				(code_count::numeric / NULLIF(total_count, 0)::numeric)::float8
+				code_count / NULLIF(total_count, 0)
 			FROM error_counts, total
-			WHERE total_count > 0
 		`, url, since)
 		if err != nil {
 			return err

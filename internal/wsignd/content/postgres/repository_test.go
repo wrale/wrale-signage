@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -84,11 +85,30 @@ func TestSaveEvent(t *testing.T) {
 			}
 			assert.NoError(t, err)
 
-			// Verify event was saved
-			var count int
-			err = db.QueryRow("SELECT COUNT(*) FROM content_events WHERE id = $1", tt.event.ID).Scan(&count)
+			// Verify event was saved with correct JSONB structure
+			var savedMetrics, savedError json.RawMessage
+			err = db.QueryRow(`
+				SELECT metrics, error
+				FROM content_events 
+				WHERE id = $1
+			`, tt.event.ID).Scan(&savedMetrics, &savedError)
 			assert.NoError(t, err)
-			assert.Equal(t, 1, count)
+
+			if tt.event.Metrics != nil {
+				var metrics map[string]interface{}
+				err = json.Unmarshal(savedMetrics, &metrics)
+				assert.NoError(t, err)
+				assert.Equal(t, float64(tt.event.Metrics.LoadTime), metrics["loadTime"])
+				assert.Equal(t, float64(tt.event.Metrics.RenderTime), metrics["renderTime"])
+			}
+
+			if tt.event.Error != nil {
+				var errorData map[string]interface{}
+				err = json.Unmarshal(savedError, &errorData)
+				assert.NoError(t, err)
+				assert.Equal(t, tt.event.Error.Code, errorData["code"])
+				assert.Equal(t, tt.event.Error.Message, errorData["message"])
+			}
 		})
 	}
 }
@@ -140,6 +160,19 @@ func TestGetURLMetrics(t *testing.T) {
 		err := repo.SaveEvent(ctx, event)
 		require.NoError(t, err)
 	}
+
+	// Verify JSON structure before metrics calculation
+	var metricsJSON, errorJSON string
+	err = db.QueryRow(`
+		SELECT 
+			metrics::text,
+			error::text
+		FROM content_events 
+		WHERE url = $1 AND type = $2
+		LIMIT 1
+	`, url, content.EventContentLoaded).Scan(&metricsJSON, &errorJSON)
+	require.NoError(t, err)
+	t.Logf("Stored metrics JSON: %s", metricsJSON)
 
 	metrics, err := repo.GetURLMetrics(ctx, url, since)
 	require.NoError(t, err)
