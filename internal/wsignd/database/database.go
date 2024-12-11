@@ -82,6 +82,22 @@ func MapError(err error, op string) error {
 	if errors.As(err, &pqErr) {
 		switch pqErr.Code {
 		case "23505": // unique_violation
+			if strings.Contains(pqErr.Error(), "displays_pkey") {
+				return werrors.NewError(
+					"CONFLICT",
+					"display ID already exists",
+					op,
+					werrors.ErrConflict,
+				)
+			}
+			if strings.Contains(pqErr.Error(), "displays_name_key") {
+				return werrors.NewError(
+					"DISPLAY_EXISTS",
+					fmt.Sprintf("display already exists: %s", strings.TrimPrefix(pqErr.Message, "Key (name)=(")),
+					op,
+					werrors.ErrConflict,
+				)
+			}
 			return werrors.NewError(
 				"CONFLICT",
 				"resource already exists",
