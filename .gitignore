@@ -28,3 +28,4 @@ bin/
 testdata/
 node_modules/
 package-lock.json
+*.swp
