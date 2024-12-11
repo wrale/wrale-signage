@@ -32,12 +32,12 @@ func NewHandler(service display.Service, logger *slog.Logger) *Handler {
 func (h *Handler) Router() *chi.Mux {
 	r := chi.NewRouter()
 
-	// Add our middleware
-	r.Use(logMiddleware(h.logger))   // Our structured logging
-	r.Use(middleware.RequestID)      // Generates request IDs
+	// Add middleware in correct order
+	r.Use(middleware.RequestID)      // First: generates request IDs
 	r.Use(middleware.RealIP)         // Uses X-Forwarded-For if present
 	r.Use(middleware.Recoverer)      // Recovers from panics
-	r.Use(requestIDHeaderMiddleware) // Ensures request ID in response
+	r.Use(requestIDHeaderMiddleware) // Adds ID to response headers
+	r.Use(logMiddleware(h.logger))   // Last: logs with all context
 
 	// API Routes v1alpha1
 	r.Route("/api/v1alpha1/displays", func(r chi.Router) {
