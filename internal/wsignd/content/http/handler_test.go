@@ -37,10 +37,10 @@ func (m *mockService) GetURLMetrics(ctx context.Context, url string) (*content.U
 
 func TestReportEvents(t *testing.T) {
 	tests := []struct {
-		name           string
-		batch         *content.EventBatch
-		serviceError   error
-		expectedCode  int
+		name         string
+		batch        *content.EventBatch
+		serviceError error
+		expectedCode int
 	}{
 		{
 			name: "successful_report",
@@ -55,12 +55,12 @@ func TestReportEvents(t *testing.T) {
 					},
 				},
 			},
-			serviceError:  nil,
+			serviceError: nil,
 			expectedCode: http.StatusAccepted,
 		},
 		{
-			name: "invalid_request",
-			batch: nil,
+			name:         "invalid_request",
+			batch:        nil,
 			serviceError: nil,
 			expectedCode: http.StatusBadRequest,
 		},
@@ -74,15 +74,15 @@ func TestReportEvents(t *testing.T) {
 			}
 
 			handler := NewHandler(mockSvc, slog.Default())
-			
+
 			var body []byte
 			if tt.batch != nil {
 				body, _ = json.Marshal(tt.batch)
 			}
-			
+
 			req := httptest.NewRequest("POST", "/events", bytes.NewReader(body))
 			w := httptest.NewRecorder()
-			
+
 			handler.ReportEvents(w, req)
 			assert.Equal(t, tt.expectedCode, w.Code)
 			mockSvc.AssertExpectations(t)
@@ -93,11 +93,11 @@ func TestReportEvents(t *testing.T) {
 func TestGetURLHealth(t *testing.T) {
 	testURL := "https://example.com/content"
 	tests := []struct {
-		name           string
-		url           string
-		mockHealth    *content.HealthStatus
-		mockError     error
-		expectedCode  int
+		name         string
+		url          string
+		mockHealth   *content.HealthStatus
+		mockError    error
+		expectedCode int
 	}{
 		{
 			name: "healthy_url",
@@ -112,7 +112,7 @@ func TestGetURLHealth(t *testing.T) {
 		},
 		{
 			name:         "missing_url",
-			url:         "",
+			url:          "",
 			mockHealth:   nil,
 			mockError:    nil,
 			expectedCode: http.StatusBadRequest,
@@ -127,15 +127,15 @@ func TestGetURLHealth(t *testing.T) {
 			}
 
 			handler := NewHandler(mockSvc, slog.Default())
-			
+
 			req := httptest.NewRequest("GET", "/health/"+tt.url, nil)
 			w := httptest.NewRecorder()
-			
+
 			// Add URL parameter to context using chi
 			rctx := chi.NewRouteContext()
 			rctx.URLParams.Add("url", tt.url)
 			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-			
+
 			handler.GetURLHealth(w, req)
 			assert.Equal(t, tt.expectedCode, w.Code)
 			mockSvc.AssertExpectations(t)

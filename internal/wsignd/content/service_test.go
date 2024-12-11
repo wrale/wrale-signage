@@ -163,11 +163,11 @@ func TestService_GetURLMetrics(t *testing.T) {
 	ctx := context.Background()
 	url := "https://example.com/content"
 	metrics := &URLMetrics{
-		URL:          url,
-		LastSeen:     time.Now().Unix(),
-		LoadCount:    100,
-		ErrorCount:   5,
-		AvgLoadTime:  500,
+		URL:           url,
+		LastSeen:      time.Now().Unix(),
+		LoadCount:     100,
+		ErrorCount:    5,
+		AvgLoadTime:   500,
 		AvgRenderTime: 200,
 		ErrorRates: map[string]float64{
 			"LOAD_FAILED": 0.05,
