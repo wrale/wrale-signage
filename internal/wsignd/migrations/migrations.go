@@ -7,12 +7,16 @@ import (
 	"embed"
 	"fmt"
 	"log"
+	"regexp"
 	"sort"
+	"strconv"
 	"time"
 )
 
 //go:embed *.sql
 var migrationFiles embed.FS
+
+var migrationFilePattern = regexp.MustCompile(`^(\d{3})_(.+)\.sql$`)
 
 // Migration represents a single database migration
 type Migration struct {
@@ -50,9 +54,33 @@ func (m *Manager) LoadMigrations() ([]Migration, error) {
 			continue
 		}
 
-		// Parse migration metadata and content
-		// TODO: Implement reading of version, description, and SQL content
+		filename := entry.Name()
+		matches := migrationFilePattern.FindStringSubmatch(filename)
+		if matches == nil {
+			continue // Skip files that don't match pattern
+		}
 
+		// Parse version and description from filename
+		version, err := strconv.Atoi(matches[1])
+		if err != nil {
+			return nil, fmt.Errorf("invalid migration version in %s: %w", filename, err)
+		}
+
+		description := matches[2]
+
+		// Read migration content
+		content, err := migrationFiles.ReadFile(filename)
+		if err != nil {
+			return nil, fmt.Errorf("error reading migration %s: %w", filename, err)
+		}
+
+		migrations = append(migrations, Migration{
+			Version:     version,
+			Description: description,
+			Up:         string(content),
+			// Down migrations not currently supported
+			Down: "",
+		})
 	}
 
 	// Sort migrations by version
