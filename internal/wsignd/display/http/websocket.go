@@ -54,9 +54,22 @@ func (c *connection) readPump() {
 	}()
 
 	c.ws.SetReadLimit(maxMessageSize)
-	c.ws.SetReadDeadline(time.Now().Add(pongWait))
+	if err := c.ws.SetReadDeadline(time.Now().Add(pongWait)); err != nil {
+		c.logger.Error("failed to set read deadline", 
+			"error", err,
+			"displayId", c.displayID,
+		)
+		return
+	}
+
 	c.ws.SetPongHandler(func(string) error {
-		c.ws.SetReadDeadline(time.Now().Add(pongWait))
+		if err := c.ws.SetReadDeadline(time.Now().Add(pongWait)); err != nil {
+			c.logger.Error("failed to set read deadline in pong handler", 
+				"error", err,
+				"displayId", c.displayID,
+			)
+			return err
+		}
 		return nil
 	})
 
@@ -95,7 +108,13 @@ func (c *connection) readPump() {
 }
 
 func (c *connection) write(mt int, payload []byte) error {
-	c.ws.SetWriteDeadline(time.Now().Add(writeWait))
+	if err := c.ws.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
+		c.logger.Error("failed to set write deadline",
+			"error", err,
+			"displayId", c.displayID,
+		)
+		return err
+	}
 	return c.ws.WriteMessage(mt, payload)
 }
 
@@ -110,14 +129,27 @@ func (c *connection) writePump() {
 		select {
 		case message, ok := <-c.send:
 			if !ok {
-				c.write(websocket.CloseMessage, []byte{})
+				if err := c.write(websocket.CloseMessage, []byte{}); err != nil {
+					c.logger.Error("failed to write close message",
+						"error", err,
+						"displayId", c.displayID,
+					)
+				}
 				return
 			}
 			if err := c.write(websocket.TextMessage, message); err != nil {
+				c.logger.Error("failed to write message",
+					"error", err,
+					"displayId", c.displayID,
+				)
 				return
 			}
 		case <-ticker.C:
 			if err := c.write(websocket.PingMessage, []byte{}); err != nil {
+				c.logger.Error("failed to write ping",
+					"error", err,
+					"displayId", c.displayID,
+				)
 				return
 			}
 		}
@@ -210,7 +242,7 @@ func (h *Handler) ServeWs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify display exists and is active
-	display, err := h.service.Get(r.Context(), displayID)
+	d, err := h.service.Get(r.Context(), displayID)
 	if err != nil {
 		h.logger.Error("failed to get display",
 			"error", err,
@@ -220,7 +252,7 @@ func (h *Handler) ServeWs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if convert(display.State) != v1alpha1.DisplayStateActive {
+	if convert(d.State) != v1alpha1.DisplayStateActive {
 		http.Error(w, "display not active", http.StatusForbidden)
 		return
 	}

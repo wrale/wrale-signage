@@ -93,6 +93,9 @@ func (m *Manager) readMessages() {
 func (m *Manager) writeStatus() {
 	defer m.conn.Close()
 
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
 	// Initial status message
 	if err := m.sendStatus("", nil); err != nil {
 		m.errors <- err
@@ -103,6 +106,11 @@ func (m *Manager) writeStatus() {
 		select {
 		case <-m.done:
 			return
+		case <-ticker.C:
+			if err := m.sendStatus("", nil); err != nil {
+				m.errors <- err
+				return
+			}
 		}
 	}
 }
