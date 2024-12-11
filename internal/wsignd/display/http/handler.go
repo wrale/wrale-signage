@@ -10,6 +10,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
 	"github.com/wrale/wrale-signage/api/types/v1alpha1"
 	"github.com/wrale/wrale-signage/internal/wsignd/display"
@@ -32,6 +33,32 @@ func NewHandler(service display.Service, logger *slog.Logger) *Handler {
 	h.hub = newHub(logger)
 	go h.hub.run(context.Background()) // TODO: manage lifecycle with context
 	return h
+}
+
+// Router returns a configured chi router for display endpoints
+func (h *Handler) Router() *chi.Mux {
+	r := chi.NewRouter()
+
+	// Add common middleware
+	r.Use(middleware.RequestID)
+	r.Use(middleware.RealIP)
+	r.Use(middleware.Logger)
+	r.Use(middleware.Recoverer)
+
+	// Add our routes
+	r.Route("/api/v1alpha1/displays", func(r chi.Router) {
+		// Display registration
+		r.Post("/", h.RegisterDisplay)
+
+		// Single display operations
+		r.Route("/{id}", func(r chi.Router) {
+			r.Get("/", h.GetDisplay)
+			r.Put("/activate", h.ActivateDisplay)
+			r.Put("/last-seen", h.UpdateLastSeen)
+		})
+	})
+
+	return r
 }
 
 // writeError writes a JSON error response, falling back to plain text if JSON encoding fails
