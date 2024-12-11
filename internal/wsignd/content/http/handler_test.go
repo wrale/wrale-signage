@@ -47,6 +47,32 @@ func (m *mockService) ValidateContent(ctx context.Context, url string) error {
 	return args.Error(0)
 }
 
+// matchEventBatch is a custom matcher for EventBatch that ignores monotonic clock values
+func matchEventBatch(expected content.EventBatch) interface{} {
+	return mock.MatchedBy(func(actual content.EventBatch) bool {
+		if expected.DisplayID != actual.DisplayID {
+			return false
+		}
+		if len(expected.Events) != len(actual.Events) {
+			return false
+		}
+		for i, expectedEvent := range expected.Events {
+			actualEvent := actual.Events[i]
+			if expectedEvent.ID != actualEvent.ID ||
+				expectedEvent.DisplayID != actualEvent.DisplayID ||
+				expectedEvent.Type != actualEvent.Type ||
+				expectedEvent.URL != actualEvent.URL {
+				return false
+			}
+			// Compare timestamps ignoring monotonic clock
+			if !expectedEvent.Timestamp.Equal(actualEvent.Timestamp) {
+				return false
+			}
+		}
+		return true
+	})
+}
+
 func TestReportEvents(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -82,7 +108,7 @@ func TestReportEvents(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			mockSvc := new(mockService)
 			if tt.batch != nil {
-				mockSvc.On("ReportEvents", mock.Anything, *tt.batch).Return(tt.serviceError)
+				mockSvc.On("ReportEvents", mock.Anything, matchEventBatch(*tt.batch)).Return(tt.serviceError)
 			}
 
 			handler := NewHandler(mockSvc, slog.Default())
