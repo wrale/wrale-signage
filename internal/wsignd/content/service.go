@@ -6,22 +6,22 @@ import (
 	"time"
 )
 
-type Service struct {
+type contentService struct {
 	processor EventProcessor
 	metrics   MetricsAggregator
 	monitor   HealthMonitor
 	mu        sync.RWMutex
 }
 
-func NewService(processor EventProcessor, metrics MetricsAggregator, monitor HealthMonitor) *Service {
-	return &Service{
+func NewService(processor EventProcessor, metrics MetricsAggregator, monitor HealthMonitor) Service {
+	return &contentService{
 		processor: processor,
 		metrics:   metrics,
 		monitor:   monitor,
 	}
 }
 
-func (s *Service) ReportEvents(ctx context.Context, batch EventBatch) error {
+func (s *contentService) ReportEvents(ctx context.Context, batch EventBatch) error {
 	if err := s.processor.ProcessEvents(ctx, batch); err != nil {
 		return err
 	}
@@ -37,15 +37,15 @@ func (s *Service) ReportEvents(ctx context.Context, batch EventBatch) error {
 	return nil
 }
 
-func (s *Service) GetURLHealth(ctx context.Context, url string) (*HealthStatus, error) {
+func (s *contentService) GetURLHealth(ctx context.Context, url string) (*HealthStatus, error) {
 	return s.monitor.CheckHealth(ctx, url)
 }
 
-func (s *Service) GetURLMetrics(ctx context.Context, url string) (*URLMetrics, error) {
+func (s *contentService) GetURLMetrics(ctx context.Context, url string) (*URLMetrics, error) {
 	return s.metrics.GetURLMetrics(ctx, url)
 }
 
-func (s *Service) ValidateContent(ctx context.Context, url string) error {
+func (s *contentService) ValidateContent(ctx context.Context, url string) error {
 	// Initial implementation just checks if we have recent successful loads
 	metrics, err := s.metrics.GetURLMetrics(ctx, url)
 	if err != nil {
