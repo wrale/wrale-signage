@@ -22,26 +22,55 @@ func NewRepository(db *sql.DB) *repository {
 func (r *repository) SaveEvent(ctx context.Context, event content.Event) error {
 	const op = "ContentRepository.SaveEvent"
 
-	metrics, err := json.Marshal(event.Metrics)
-	if err != nil {
-		return database.MapError(err, op)
+	var metrics []byte
+	if event.Metrics != nil {
+		var err error
+		metrics, err = json.Marshal(event.Metrics)
+		if err != nil {
+			return database.MapError(err, op)
+		}
+	} else {
+		metrics = []byte("{}")
 	}
 
 	var errorJSON []byte
 	if event.Error != nil {
+		var err error
 		errorJSON, err = json.Marshal(event.Error)
 		if err != nil {
 			return database.MapError(err, op)
 		}
+	} else {
+		errorJSON = []byte("null")
 	}
 
-	context, err := json.Marshal(event.Context)
-	if err != nil {
-		return database.MapError(err, op)
+	var contextJSON []byte
+	if event.Context != nil {
+		var err error
+		contextJSON, err = json.Marshal(event.Context)
+		if err != nil {
+			return database.MapError(err, op)
+		}
+	} else {
+		contextJSON = []byte("{}")
 	}
 
-	err = database.RunInTx(ctx, r.db, nil, func(tx *database.Tx) error {
-		_, err := tx.ExecContext(ctx, `
+	err := database.RunInTx(ctx, r.db, nil, func(tx *database.Tx) error {
+		// Verify display exists
+		var exists bool
+		err := tx.QueryRowContext(ctx,
+			"SELECT EXISTS(SELECT 1 FROM displays WHERE id = $1)",
+			event.DisplayID,
+		).Scan(&exists)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return database.MapError(sql.ErrNoRows, op)
+		}
+
+		// Insert event
+		_, err = tx.ExecContext(ctx, `
 			INSERT INTO content_events (
 				id, display_id, type, url, timestamp,
 				error, metrics, context
@@ -54,7 +83,7 @@ func (r *repository) SaveEvent(ctx context.Context, event content.Event) error {
 			event.Timestamp,
 			errorJSON,
 			metrics,
-			context,
+			contextJSON,
 		)
 		return err
 	})
@@ -187,21 +216,21 @@ func (r *repository) GetDisplayEvents(ctx context.Context, displayID uuid.UUID, 
 				return err
 			}
 
-			if len(errorJSON) > 0 {
+			if len(errorJSON) > 0 && string(errorJSON) != "null" {
 				event.Error = &content.EventError{}
 				if err := json.Unmarshal(errorJSON, event.Error); err != nil {
 					return err
 				}
 			}
 
-			if len(metricsJSON) > 0 {
+			if len(metricsJSON) > 0 && string(metricsJSON) != "{}" {
 				event.Metrics = &content.EventMetrics{}
 				if err := json.Unmarshal(metricsJSON, event.Metrics); err != nil {
 					return err
 				}
 			}
 
-			if len(contextJSON) > 0 {
+			if len(contextJSON) > 0 && string(contextJSON) != "{}" {
 				if err := json.Unmarshal(contextJSON, &event.Context); err != nil {
 					return err
 				}
