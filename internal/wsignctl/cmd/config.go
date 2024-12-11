@@ -97,7 +97,7 @@ func newConfigSetContextCmd() *cobra.Command {
 				cfg.CurrentContext = name
 			}
 
-			if err := config.SaveConfig(cfg); err != nil {
+			if err := config.SaveConfig(cfg, cfgFile); err != nil {
 				return fmt.Errorf("error saving config: %w", err)
 			}
 
@@ -128,7 +128,7 @@ func newConfigDeleteContextCmd() *cobra.Command {
 				return fmt.Errorf("error removing context: %w", err)
 			}
 
-			if err := config.SaveConfig(cfg); err != nil {
+			if err := config.SaveConfig(cfg, cfgFile); err != nil {
 				return fmt.Errorf("error saving config: %w", err)
 			}
 
@@ -151,7 +151,7 @@ func newConfigUseContextCmd() *cobra.Command {
 				return fmt.Errorf("error setting current context: %w", err)
 			}
 
-			if err := config.SaveConfig(cfg); err != nil {
+			if err := config.SaveConfig(cfg, cfgFile); err != nil {
 				return fmt.Errorf("error saving config: %w", err)
 			}
 
