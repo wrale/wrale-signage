@@ -103,14 +103,34 @@ func (r *repository) GetURLMetrics(ctx context.Context, url string, since time.T
 	metrics.ErrorRates = make(map[string]float64)
 
 	err := database.RunInTx(ctx, r.db, &database.TxOptions{ReadOnly: true}, func(tx *database.Tx) error {
-		// Get last seen timestamp
+		// Get total event count first to prevent division by zero
+		var totalCount int64
 		err := tx.QueryRowContext(ctx, `
+			SELECT COUNT(*) 
+			FROM content_events 
+			WHERE url = $1 AND timestamp >= $2
+		`, url, since).Scan(&totalCount)
+		if err != nil {
+			return err
+		}
+
+		if totalCount == 0 {
+			// No events found, return empty metrics
+			return nil
+		}
+
+		// Get last seen timestamp
+		var lastSeen sql.NullFloat64
+		err = tx.QueryRowContext(ctx, `
 			SELECT EXTRACT(EPOCH FROM MAX(timestamp))
 			FROM content_events 
 			WHERE url = $1
-		`, url).Scan(&metrics.LastSeen)
+		`, url).Scan(&lastSeen)
 		if err != nil && err != sql.ErrNoRows {
 			return err
+		}
+		if lastSeen.Valid {
+			metrics.LastSeen = lastSeen.Float64
 		}
 
 		// Get load and error counts
@@ -125,15 +145,16 @@ func (r *repository) GetURLMetrics(ctx context.Context, url string, since time.T
 			return err
 		}
 
-		// Get average timing metrics
+		// Get average timing metrics using NULLIF to handle zero counts
 		err = tx.QueryRowContext(ctx, `
 			SELECT 
-				AVG((metrics->>'loadTime')::bigint),
-				AVG((metrics->>'renderTime')::bigint)
+				COALESCE(AVG(NULLIF((metrics->>'loadTime')::bigint, 0)), 0),
+				COALESCE(AVG(NULLIF((metrics->>'renderTime')::bigint, 0)), 0)
 			FROM content_events 
 			WHERE url = $1 
 				AND timestamp >= $2
 				AND metrics IS NOT NULL
+				AND metrics ? 'loadTime'
 		`, url, since).Scan(&metrics.AvgLoadTime, &metrics.AvgRenderTime)
 		if err != nil && err != sql.ErrNoRows {
 			return err
@@ -141,19 +162,20 @@ func (r *repository) GetURLMetrics(ctx context.Context, url string, since time.T
 
 		// Get error rates by code
 		rows, err := tx.QueryContext(ctx, `
+			WITH total AS (
+				SELECT COUNT(*)::float as total_count
+				FROM content_events 
+				WHERE url = $1 AND timestamp >= $2
+			)
 			SELECT 
 				error->>'code' as error_code,
-				COUNT(*)::float / (
-					SELECT COUNT(*)::float 
-					FROM content_events 
-					WHERE url = $1 AND timestamp >= $2
-				) as error_rate
-			FROM content_events 
+				COUNT(*)::float / NULLIF(total_count, 0) as error_rate
+			FROM content_events, total
 			WHERE url = $1 
 				AND timestamp >= $2
 				AND type = 'CONTENT_ERROR'
 				AND error IS NOT NULL
-			GROUP BY error->>'code'
+			GROUP BY error->>'code', total_count
 		`, url, since)
 		if err != nil {
 			return err
