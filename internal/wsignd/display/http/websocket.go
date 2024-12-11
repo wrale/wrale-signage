@@ -47,15 +47,26 @@ type connection struct {
 	logger    *slog.Logger
 }
 
+// cleanup handles proper connection closure and cleanup
+func (c *connection) cleanup() {
+	// Ensure we unregister before closing
+	c.hub.unregister <- c
+
+	// Close the websocket connection with proper error handling
+	if err := c.ws.Close(); err != nil {
+		c.logger.Error("error closing websocket connection",
+			"error", err,
+			"displayId", c.displayID,
+		)
+	}
+}
+
 func (c *connection) readPump() {
-	defer func() {
-		c.hub.unregister <- c
-		c.ws.Close()
-	}()
+	defer c.cleanup()
 
 	c.ws.SetReadLimit(maxMessageSize)
 	if err := c.ws.SetReadDeadline(time.Now().Add(pongWait)); err != nil {
-		c.logger.Error("failed to set read deadline", 
+		c.logger.Error("failed to set read deadline",
 			"error", err,
 			"displayId", c.displayID,
 		)
@@ -64,7 +75,7 @@ func (c *connection) readPump() {
 
 	c.ws.SetPongHandler(func(string) error {
 		if err := c.ws.SetReadDeadline(time.Now().Add(pongWait)); err != nil {
-			c.logger.Error("failed to set read deadline in pong handler", 
+			c.logger.Error("failed to set read deadline in pong handler",
 				"error", err,
 				"displayId", c.displayID,
 			)
@@ -122,7 +133,12 @@ func (c *connection) writePump() {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		ticker.Stop()
-		c.ws.Close()
+		if err := c.ws.Close(); err != nil {
+			c.logger.Error("error closing websocket connection in writePump",
+				"error", err,
+				"displayId", c.displayID,
+			)
+		}
 	}()
 
 	for {

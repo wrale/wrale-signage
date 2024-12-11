@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"log/slog"
 	"github.com/wrale/wrale-signage/api/types/v1alpha1"
 )
 
@@ -16,15 +17,17 @@ type Manager struct {
 	sequence  chan *v1alpha1.ContentSequence
 	errors    chan error
 	done      chan struct{}
+	logger    *slog.Logger
 }
 
 // NewManager creates a new content delivery manager
-func NewManager(displayID uuid.UUID) *Manager {
+func NewManager(displayID uuid.UUID, logger *slog.Logger) *Manager {
 	return &Manager{
 		displayID: displayID,
 		sequence:  make(chan *v1alpha1.ContentSequence, 1),
 		errors:    make(chan error, 1),
 		done:      make(chan struct{}),
+		logger:    logger,
 	}
 }
 
@@ -47,7 +50,19 @@ func (m *Manager) Connect(ctx context.Context, wsURL string) error {
 func (m *Manager) Close() error {
 	close(m.done)
 	if m.conn != nil {
-		return m.conn.Close()
+		if err := m.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")); err != nil {
+			m.logger.Error("error sending close message",
+				"error", err,
+				"displayId", m.displayID,
+			)
+		}
+		if err := m.conn.Close(); err != nil {
+			m.logger.Error("error closing websocket connection",
+				"error", err,
+				"displayId", m.displayID,
+			)
+			return err
+		}
 	}
 	return nil
 }
@@ -63,7 +78,19 @@ func (m *Manager) GetErrors() <-chan error {
 }
 
 func (m *Manager) readMessages() {
-	defer m.conn.Close()
+	defer func() {
+		if err := m.conn.Close(); err != nil {
+			m.logger.Error("error closing websocket read connection",
+				"error", err,
+				"displayId", m.displayID,
+			)
+		}
+	}()
+
+	m.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	m.conn.SetPongHandler(func(string) error {
+		return m.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	})
 
 	for {
 		select {
@@ -73,6 +100,12 @@ func (m *Manager) readMessages() {
 			var msg v1alpha1.ControlMessage
 			err := m.conn.ReadJSON(&msg)
 			if err != nil {
+				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
+					m.logger.Error("websocket read error",
+						"error", err,
+						"displayId", m.displayID,
+					)
+				}
 				m.errors <- err
 				return
 			}
@@ -91,16 +124,30 @@ func (m *Manager) readMessages() {
 }
 
 func (m *Manager) writeStatus() {
-	defer m.conn.Close()
-
 	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
+	defer func() {
+		ticker.Stop()
+		if err := m.conn.Close(); err != nil {
+			m.logger.Error("error closing websocket write connection",
+				"error", err,
+				"displayId", m.displayID,
+			)
+		}
+	}()
 
-	// Initial status message
+	// Send initial status message
 	if err := m.sendStatus("", nil); err != nil {
+		m.logger.Error("error sending initial status",
+			"error", err,
+			"displayId", m.displayID,
+		)
 		m.errors <- err
 		return
 	}
+
+	// Set up ping handler
+	pingTicker := time.NewTicker(54 * time.Second) // 90% of read timeout
+	defer pingTicker.Stop()
 
 	for {
 		select {
@@ -108,6 +155,19 @@ func (m *Manager) writeStatus() {
 			return
 		case <-ticker.C:
 			if err := m.sendStatus("", nil); err != nil {
+				m.logger.Error("error sending status update",
+					"error", err,
+					"displayId", m.displayID,
+				)
+				m.errors <- err
+				return
+			}
+		case <-pingTicker.C:
+			if err := m.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				m.logger.Error("error sending ping",
+					"error", err,
+					"displayId", m.displayID,
+				)
 				m.errors <- err
 				return
 			}
@@ -128,6 +188,14 @@ func (m *Manager) sendStatus(currentURL string, lastErr *string) error {
 			LastError:  lastErr,
 			UpdatedAt:  time.Now(),
 		},
+	}
+
+	if err := m.conn.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		m.logger.Error("error setting write deadline",
+			"error", err,
+			"displayId", m.displayID,
+		)
+		return err
 	}
 
 	return m.conn.WriteJSON(msg)
