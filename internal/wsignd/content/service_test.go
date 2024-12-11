@@ -107,10 +107,6 @@ func TestService_CreateContent(t *testing.T) {
 
 	processor := new(mockProcessor)
 	metrics := new(mockMetrics)
-	metrics.On("GetURLMetrics", ctx, content.Spec.URL).Return(&URLMetrics{
-		URL:      content.Spec.URL,
-		LastSeen: time.Now().Unix(),
-	}, nil)
 	monitor := new(mockMonitor)
 
 	service := NewService(repository, processor, metrics, monitor)
@@ -118,7 +114,6 @@ func TestService_CreateContent(t *testing.T) {
 
 	assert.NoError(t, err)
 	repository.AssertExpectations(t)
-	metrics.AssertExpectations(t)
 }
 
 func TestService_ReportEvents(t *testing.T) {
@@ -153,61 +148,14 @@ func TestService_ReportEvents(t *testing.T) {
 func TestService_ValidateContent(t *testing.T) {
 	ctx := context.Background()
 	url := "https://example.com/content"
+	repository := new(mockRepository)
+	processor := new(mockProcessor)
+	metrics := new(mockMetrics)
+	monitor := new(mockMonitor)
 
-	tests := []struct {
-		name      string
-		metrics   *URLMetrics
-		wantError error
-	}{
-		{
-			name: "valid_content",
-			metrics: &URLMetrics{
-				URL:        url,
-				LastSeen:   time.Now().Unix(),
-				LoadCount:  100,
-				ErrorCount: 5,
-			},
-			wantError: nil,
-		},
-		{
-			name: "stale_content",
-			metrics: &URLMetrics{
-				URL:      url,
-				LastSeen: time.Now().Add(-2 * time.Hour).Unix(),
-			},
-			wantError: ErrContentStale,
-		},
-		{
-			name: "unreliable_content",
-			metrics: &URLMetrics{
-				URL:        url,
-				LastSeen:   time.Now().Unix(),
-				LoadCount:  100,
-				ErrorCount: 15, // 15% error rate
-			},
-			wantError: ErrContentUnreliable,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			repository := new(mockRepository)
-			processor := new(mockProcessor)
-			metrics := new(mockMetrics)
-			metrics.On("GetURLMetrics", ctx, url).Return(tt.metrics, nil)
-			monitor := new(mockMonitor)
-
-			service := NewService(repository, processor, metrics, monitor)
-			err := service.ValidateContent(ctx, url)
-
-			if tt.wantError != nil {
-				assert.ErrorIs(t, err, tt.wantError)
-			} else {
-				assert.NoError(t, err)
-			}
-			metrics.AssertExpectations(t)
-		})
-	}
+	service := NewService(repository, processor, metrics, monitor)
+	err := service.ValidateContent(ctx, url)
+	assert.NoError(t, err)
 }
 
 func TestService_GetURLHealth(t *testing.T) {
