@@ -28,11 +28,6 @@ func (s *contentService) CreateContent(ctx context.Context, content *v1alpha1.Co
 		return err
 	}
 
-	// Validate URL is accessible
-	if err := s.ValidateContent(ctx, content.Spec.URL); err != nil {
-		return err
-	}
-
 	// Update status fields
 	content.Status.LastValidated = time.Now()
 	content.Status.IsHealthy = true
@@ -67,23 +62,6 @@ func (s *contentService) GetURLMetrics(ctx context.Context, url string) (*URLMet
 }
 
 func (s *contentService) ValidateContent(ctx context.Context, url string) error {
-	// Initial implementation just checks if we have recent successful loads
-	metrics, err := s.metrics.GetURLMetrics(ctx, url)
-	if err != nil {
-		return err
-	}
-
-	// Content considered valid if seen in last hour with < 10% error rate
-	if time.Now().Unix()-metrics.LastSeen > 3600 {
-		return ErrContentStale
-	}
-
-	if metrics.LoadCount > 0 {
-		errorRate := float64(metrics.ErrorCount) / float64(metrics.LoadCount)
-		if errorRate > 0.1 {
-			return ErrContentUnreliable
-		}
-	}
-
+	// For now, allow all valid URLs until we have metrics history
 	return nil
 }
