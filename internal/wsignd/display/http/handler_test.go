@@ -42,9 +42,12 @@ func (m *mockService) UpdateLocation(ctx context.Context, id uuid.UUID, location
 	return args.Error(0)
 }
 
-func (m *mockService) Activate(ctx context.Context, id uuid.UUID) error {
+func (m *mockService) Activate(ctx context.Context, id uuid.UUID) (*display.Display, error) {
 	args := m.Called(ctx, id)
-	return args.Error(0)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*display.Display), args.Error(1)
 }
 
 func (m *mockService) Disable(ctx context.Context, id uuid.UUID) error {
