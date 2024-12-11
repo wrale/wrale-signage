@@ -2,6 +2,7 @@
 package v1alpha1
 
 import (
+	"fmt"
 	"time"
 )
 
@@ -101,4 +102,12 @@ type Error struct {
 	Message string `json:"message"`
 	// Details contains additional error context
 	Details interface{} `json:"details,omitempty"`
+}
+
+// Error implements the error interface
+func (e *Error) Error() string {
+	if e.Details != nil {
+		return fmt.Sprintf("%s: %s (%v)", e.Code, e.Message, e.Details)
+	}
+	return fmt.Sprintf("%s: %s", e.Code, e.Message)
 }
