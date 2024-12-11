@@ -42,47 +42,72 @@ func (r *Repository) Save(ctx context.Context, d *display.Display) error {
 
 	err = database.RunInTx(ctx, r.db, nil, func(tx *database.Tx) error {
 		// First verify display exists for updates
-		var currentVersion int
+		var exists bool
 		err := tx.QueryRowContext(ctx, `
-			SELECT version FROM displays WHERE id = $1
-		`, d.ID).Scan(&currentVersion)
-
+			SELECT EXISTS (
+				SELECT 1 FROM displays WHERE id = $1
+			)
+		`, d.ID).Scan(&exists)
 		if err != nil {
-			if err == sql.ErrNoRows {
-				r.logger.Info("creating new display",
+			r.logger.Error("failed to check display exists",
+				"error", err,
+				"displayID", d.ID,
+				"operation", op,
+			)
+			return err
+		}
+
+		r.logger.Info("display exists check",
+			"displayID", d.ID,
+			"exists", exists,
+			"version", d.Version,
+			"operation", op,
+		)
+
+		if !exists {
+			r.logger.Info("creating new display",
+				"displayID", d.ID,
+				"name", d.Name,
+				"state", d.State,
+				"version", d.Version,
+				"operation", op,
+			)
+			// Insert new display
+			_, err = tx.ExecContext(ctx, `
+				INSERT INTO displays (
+					id, name, site_id, zone, position,
+					state, last_seen, version, properties
+				) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			`,
+				d.ID,
+				d.Name,
+				d.Location.SiteID,
+				d.Location.Zone,
+				d.Location.Position,
+				d.State,
+				d.LastSeen,
+				1, // Always start at version 1
+				properties,
+			)
+			if err != nil {
+				r.logger.Error("failed to insert display",
+					"error", err,
 					"displayID", d.ID,
-					"name", d.Name,
-					"state", d.State,
 					"operation", op,
 				)
-				// Insert new display
-				_, err = tx.ExecContext(ctx, `
-					INSERT INTO displays (
-						id, name, site_id, zone, position,
-						state, last_seen, version, properties
-					) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-				`,
-					d.ID,
-					d.Name,
-					d.Location.SiteID,
-					d.Location.Zone,
-					d.Location.Position,
-					d.State,
-					d.LastSeen,
-					d.Version,
-					properties,
-				)
-				if err != nil {
-					r.logger.Error("failed to insert display",
-						"error", err,
-						"displayID", d.ID,
-						"operation", op,
-					)
-					return err
-				}
-				return nil
+				return err
 			}
-			r.logger.Error("failed to check display version",
+			d.Version = 1 // Update version after successful insert
+			return nil
+		}
+
+		// Get current version for optimistic locking
+		var currentVersion int
+		err = tx.QueryRowContext(ctx, `
+			SELECT version FROM displays WHERE id = $1
+		`, d.ID).Scan(&currentVersion)
+		if err != nil {
+			r.logger.Error("failed to get current version",
 				"error", err,
 				"displayID", d.ID,
 				"operation", op,
@@ -94,14 +119,14 @@ func (r *Repository) Save(ctx context.Context, d *display.Display) error {
 			"displayID", d.ID,
 			"name", d.Name,
 			"currentVersion", currentVersion,
-			"newVersion", d.Version,
+			"expectedVersion", d.Version,
 			"newState", d.State,
 			"operation", op,
 		)
 
 		// Verify version for optimistic locking
 		if currentVersion != d.Version {
-			r.logger.Warn("version mismatch",
+			r.logger.Error("version mismatch",
 				"displayID", d.ID,
 				"currentVersion", currentVersion,
 				"expectedVersion", d.Version,
