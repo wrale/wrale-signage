@@ -6,11 +6,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
-	"log/slog"
 	"github.com/wrale/wrale-signage/api/types/v1alpha1"
+	"log/slog"
 )
 
-// Manager handles WebSocket connections for content delivery
 type Manager struct {
 	displayID uuid.UUID
 	conn      *websocket.Conn
@@ -20,7 +19,6 @@ type Manager struct {
 	logger    *slog.Logger
 }
 
-// NewManager creates a new content delivery manager
 func NewManager(displayID uuid.UUID, logger *slog.Logger) *Manager {
 	return &Manager{
 		displayID: displayID,
@@ -31,7 +29,6 @@ func NewManager(displayID uuid.UUID, logger *slog.Logger) *Manager {
 	}
 }
 
-// Connect establishes connection to control WebSocket
 func (m *Manager) Connect(ctx context.Context, wsURL string) error {
 	conn, _, err := websocket.DefaultDialer.DialContext(ctx, wsURL, nil)
 	if err != nil {
@@ -39,14 +36,12 @@ func (m *Manager) Connect(ctx context.Context, wsURL string) error {
 	}
 	m.conn = conn
 
-	// Start handling messages
 	go m.readMessages()
 	go m.writeStatus()
 
 	return nil
 }
 
-// Close terminates the WebSocket connection
 func (m *Manager) Close() error {
 	close(m.done)
 	if m.conn != nil {
@@ -67,12 +62,10 @@ func (m *Manager) Close() error {
 	return nil
 }
 
-// GetSequence returns channel for receiving content sequences
 func (m *Manager) GetSequence() <-chan *v1alpha1.ContentSequence {
 	return m.sequence
 }
 
-// GetErrors returns channel for receiving connection errors
 func (m *Manager) GetErrors() <-chan error {
 	return m.errors
 }
@@ -87,7 +80,15 @@ func (m *Manager) readMessages() {
 		}
 	}()
 
-	m.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	if err := m.conn.SetReadDeadline(time.Now().Add(60 * time.Second)); err != nil {
+		m.logger.Error("error setting read deadline",
+			"error", err,
+			"displayId", m.displayID,
+		)
+		m.errors <- err
+		return
+	}
+
 	m.conn.SetPongHandler(func(string) error {
 		return m.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	})
@@ -116,7 +117,6 @@ func (m *Manager) readMessages() {
 					m.sequence <- msg.Sequence
 				}
 			case v1alpha1.ControlMessageReload:
-				// Signal page reload needed
 				m.errors <- &ReloadRequiredError{At: time.Now()}
 			}
 		}
@@ -135,7 +135,6 @@ func (m *Manager) writeStatus() {
 		}
 	}()
 
-	// Send initial status message
 	if err := m.sendStatus("", nil); err != nil {
 		m.logger.Error("error sending initial status",
 			"error", err,
@@ -145,8 +144,7 @@ func (m *Manager) writeStatus() {
 		return
 	}
 
-	// Set up ping handler
-	pingTicker := time.NewTicker(54 * time.Second) // 90% of read timeout
+	pingTicker := time.NewTicker(54 * time.Second)
 	defer pingTicker.Stop()
 
 	for {
@@ -201,7 +199,6 @@ func (m *Manager) sendStatus(currentURL string, lastErr *string) error {
 	return m.conn.WriteJSON(msg)
 }
 
-// ReloadRequiredError indicates display should reload device URL
 type ReloadRequiredError struct {
 	At time.Time
 }
