@@ -3,7 +3,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -51,19 +50,24 @@ func main() {
 		}
 	}
 
-	// Establish database connection with proper connection pooling
-	db, err := setupDatabase(cfg.Database)
+	// Build connection string
+	connStr := fmt.Sprintf(
+		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+		cfg.Database.Host,
+		cfg.Database.Port,
+		cfg.Database.User,
+		cfg.Database.Password,
+		cfg.Database.Name,
+		cfg.Database.SSLMode,
+	)
+
+	// Establish database connection with proper connection pooling and run migrations
+	db, err := database.SetupDatabase(connStr, 5, time.Second)
 	if err != nil {
-		logger.Error("failed to connect to database", "error", err)
+		logger.Error("failed to setup database", "error", err)
 		os.Exit(1)
 	}
 	defer db.Close()
-
-	// Run database migrations
-	if err := database.RunMigrations(db); err != nil {
-		logger.Error("failed to run migrations", "error", err)
-		os.Exit(1)
-	}
 
 	// Create HTTP server with timeouts and configuration
 	server := &http.Server{
@@ -111,41 +115,6 @@ func main() {
 	}
 
 	logger.Info("server stopped")
-}
-
-// setupDatabase creates a database connection pool with proper configuration
-func setupDatabase(cfg config.DatabaseConfig) (*sql.DB, error) {
-	// Build Postgres connection string with all parameters
-	connStr := fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-		cfg.Host,
-		cfg.Port,
-		cfg.User,
-		cfg.Password,
-		cfg.Name,
-		cfg.SSLMode,
-	)
-
-	// Open database connection
-	db, err := sql.Open("postgres", connStr)
-	if err != nil {
-		return nil, fmt.Errorf("error opening database: %w", err)
-	}
-
-	// Configure connection pool
-	db.SetMaxOpenConns(cfg.MaxOpenConns)
-	db.SetMaxIdleConns(cfg.MaxIdleConns)
-	db.SetConnMaxLifetime(cfg.ConnMaxLifetime)
-
-	// Verify connection is working
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := db.PingContext(ctx); err != nil {
-		return nil, fmt.Errorf("error connecting to database: %w", err)
-	}
-
-	return db, nil
 }
 
 // setupRouter creates and configures the HTTP router with all application routes

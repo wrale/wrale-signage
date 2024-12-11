@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/lib/pq"
 	werrors "github.com/wrale/wrale-signage/internal/wsignd/errors"
@@ -24,6 +25,42 @@ type TxOptions struct {
 	Isolation sql.IsolationLevel
 	// ReadOnly indicates if the transaction is read-only
 	ReadOnly bool
+}
+
+// SetupDatabase creates a connection pool and ensures migrations are applied
+func SetupDatabase(connStr string, maxRetries int, backoff time.Duration) (*sql.DB, error) {
+	var db *sql.DB
+	var err error
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		db, err = sql.Open("postgres", connStr)
+		if err == nil {
+			// Configure connection pool
+			db.SetMaxOpenConns(25)
+			db.SetMaxIdleConns(25)
+			db.SetConnMaxLifetime(5 * time.Minute)
+
+			// Verify connection and run migrations
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if err := db.PingContext(ctx); err == nil {
+				cancel()
+				// Run migrations
+				if err := RunMigrations(db); err != nil {
+					db.Close()
+					return nil, fmt.Errorf("migration failed: %w", err)
+				}
+				return db, nil
+			}
+			cancel()
+			db.Close()
+		}
+
+		// Wait before retry
+		time.Sleep(backoff)
+		backoff *= 2 // Exponential backoff
+	}
+
+	return nil, fmt.Errorf("failed to setup database after %d attempts: %w", maxRetries, err)
 }
 
 // RunMigrations executes all SQL migrations using the migration manager
