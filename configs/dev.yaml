@@ -6,11 +6,11 @@ server:
   idleTimeout: 120s
 
 database:
-  host: localhost
+  host: postgres
   port: 5432
   name: wrale_test
   user: postgres
-  password: postgres
+  password: wrale-dev-password
   sslmode: disable
   maxOpenConns: 25
   maxIdleConns: 25

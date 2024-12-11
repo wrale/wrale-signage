@@ -70,13 +70,13 @@ func Load() (*Config, error) {
 		TLSKey:       getEnv("WSIGN_TLS_KEY", ""),
 	}
 
-	// Load database config
+	// Load database config with both WSIGN_ and direct env vars
 	cfg.Database = DatabaseConfig{
-		Host:            getEnv("WSIGN_DB_HOST", "localhost"),
-		Port:            getEnvAsInt("WSIGN_DB_PORT", 5432),
-		Name:            getEnv("WSIGN_DB_NAME", "wrale_signage"),
-		User:            getEnv("WSIGN_DB_USER", "postgres"),
-		Password:        getEnv("WSIGN_DB_PASSWORD", ""),
+		Host:            getEnvMulti([]string{"WSIGN_DB_HOST", "DB_HOST", "POSTGRES_HOST"}, "localhost"),
+		Port:            getEnvAsIntMulti([]string{"WSIGN_DB_PORT", "DB_PORT", "POSTGRES_PORT"}, 5432),
+		Name:            getEnvMulti([]string{"WSIGN_DB_NAME", "DB_NAME", "POSTGRES_DB"}, "wrale_signage"),
+		User:            getEnvMulti([]string{"WSIGN_DB_USER", "DB_USER", "POSTGRES_USER"}, "postgres"),
+		Password:        getEnvMulti([]string{"WSIGN_DB_PASSWORD", "DB_PASSWORD", "POSTGRES_PASSWORD"}, ""),
 		SSLMode:         getEnv("WSIGN_DB_SSLMODE", "disable"),
 		MaxOpenConns:    getEnvAsInt("WSIGN_DB_MAX_OPEN_CONNS", 25),
 		MaxIdleConns:    getEnvAsInt("WSIGN_DB_MAX_IDLE_CONNS", 25),
@@ -126,6 +126,28 @@ func (c *Config) validate() error {
 		return fmt.Errorf("cache size must be at least 1MB")
 	}
 	return nil
+}
+
+// getEnvMulti tries multiple environment variables in order
+func getEnvMulti(keys []string, fallback string) string {
+	for _, key := range keys {
+		if value, exists := os.LookupEnv(key); exists {
+			return value
+		}
+	}
+	return fallback
+}
+
+// getEnvAsIntMulti tries multiple environment variables in order
+func getEnvAsIntMulti(keys []string, fallback int) int {
+	for _, key := range keys {
+		if strValue, exists := os.LookupEnv(key); exists {
+			if value, err := strconv.Atoi(strValue); err == nil {
+				return value
+			}
+		}
+	}
+	return fallback
 }
 
 func getEnv(key, fallback string) string {

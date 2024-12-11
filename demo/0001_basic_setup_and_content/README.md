@@ -9,16 +9,18 @@ This demo showcases the core functionality of Wrale Signage:
 
 ## Prerequisites
 
-1. PostgreSQL 14+
+1. Docker Compose v2
 2. Go 1.21+
 3. Node.js 18+
-4. Docker (for development database)
 
 ## Setup Steps
 
 1. Start development database:
 ```bash
+docker-compose down -v
 docker-compose up -d postgres
+
+sleep 5  # Wait for PostgreSQL to start
 ./scripts/init-test-db.sh
 ```
 
@@ -56,11 +58,11 @@ npm run dev
 1. Add test content:
 ```bash
 ./bin/wsignctl content add \
-  --path testdata/welcome.html \
+  --path demo/0001_basic_setup_and_content/content/welcome.html \
   --duration 10s
   
 ./bin/wsignctl content add \
-  --path testdata/news.html \
+  --path demo/0001_basic_setup_and_content/content/news.html \
   --duration 15s
 ```
 
@@ -111,17 +113,12 @@ npm run dev
 
 1. Stop all components:
 ```bash
-docker-compose down
-```
-
-2. Reset database:
-```bash
-./scripts/init-test-db.sh --reset
+docker-compose down -v
 ```
 
 ## Additional Notes
 
 - Demo uses development configuration
-- Content paths are relative to configs/content directory
+- Created test content is stored in testdata directory
 - Health metrics persist in database between runs
 - Use --verbose flag with CLI for detailed output

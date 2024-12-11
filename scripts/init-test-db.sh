@@ -10,6 +10,12 @@ DB_NAME=${POSTGRES_DB:-postgres}
 MAX_RETRIES=${MAX_RETRIES:-5}
 RETRY_INTERVAL=${RETRY_INTERVAL:-5}
 
+echo "Using database configuration:"
+echo "Host: $DB_HOST"
+echo "Port: $DB_PORT"
+echo "User: $DB_USER"
+echo "Database: $DB_NAME"
+
 # Function to check database connection
 check_connection() {
     PGPASSWORD=$DB_PASSWORD psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -c "SELECT 1" >/dev/null 2>&1
@@ -31,12 +37,18 @@ fi
 
 echo "PostgreSQL is ready"
 
-# Create test database
+# Create test database with debug output
 echo "Creating test database..."
-PGPASSWORD=$DB_PASSWORD psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" <<-EOSQL
+export PGPASSWORD=$DB_PASSWORD
+psql -v ON_ERROR_STOP=1 -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" <<-EOSQL
+    SELECT current_user, current_database();
     DROP DATABASE IF EXISTS wrale_test;
     CREATE DATABASE wrale_test;
     GRANT ALL PRIVILEGES ON DATABASE wrale_test TO $DB_USER;
 EOSQL
+
+# Test connection to new database
+echo "Testing connection to wrale_test database..."
+PGPASSWORD=$DB_PASSWORD psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d wrale_test -c "SELECT current_user, current_database();"
 
 echo "Test database created successfully"
