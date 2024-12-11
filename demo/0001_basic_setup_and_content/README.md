@@ -31,7 +31,7 @@ WSIGN_AUTH_TOKEN_KEY=dev-secret-key \
   ./bin/wsignd --config configs/dev.yaml
 ```
 
-3. Build and start the web interface:
+3. In another terminal, build and start the web interface:
 ```bash
 cd web
 npm install
@@ -42,9 +42,9 @@ npm run dev
 
 ### 1. Display Registration (5 minutes)
 
-1. Open web interface at http://localhost:3000
+1. Open web interface at http://localhost:5173
 2. Browser interface loads and displays registration code (e.g., "BLUE-FISH")
-3. Use CLI to register display:
+3. In another terminal, use CLI to register display:
 ```bash
 ./bin/wsignctl display activate BLUE-FISH \
   --site headquarters \
