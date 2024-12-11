@@ -17,10 +17,12 @@ import (
 	_ "github.com/lib/pq"
 
 	"github.com/wrale/wrale-signage/internal/wsignd/config"
+	"github.com/wrale/wrale-signage/internal/wsignd/database"
 	"github.com/wrale/wrale-signage/internal/wsignd/display"
 	displayhttp "github.com/wrale/wrale-signage/internal/wsignd/display/http"
 	"github.com/wrale/wrale-signage/internal/wsignd/display/postgres"
 	"github.com/wrale/wrale-signage/internal/wsignd/display/service"
+	"github.com/wrale/wrale-signage/internal/wsignd/migrations"
 )
 
 func main() {
@@ -57,6 +59,12 @@ func main() {
 		os.Exit(1)
 	}
 	defer db.Close()
+
+	// Run database migrations
+	if err := database.RunMigrations(db); err != nil {
+		logger.Error("failed to run migrations", "error", err)
+		os.Exit(1)
+	}
 
 	// Create HTTP server with timeouts and configuration
 	server := &http.Server{
