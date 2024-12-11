@@ -9,10 +9,10 @@ import (
 type EventType string
 
 const (
-	EventContentLoaded     EventType = "CONTENT_LOADED"
-	EventContentError      EventType = "CONTENT_ERROR"
-	EventContentVisible    EventType = "CONTENT_VISIBLE"
-	EventContentHidden     EventType = "CONTENT_HIDDEN"
+	EventContentLoaded      EventType = "CONTENT_LOADED"
+	EventContentError       EventType = "CONTENT_ERROR"
+	EventContentVisible     EventType = "CONTENT_VISIBLE"
+	EventContentHidden      EventType = "CONTENT_HIDDEN"
 	EventContentInteractive EventType = "CONTENT_INTERACTIVE"
 )
 
