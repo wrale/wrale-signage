@@ -32,26 +32,21 @@ func NewHandler(service display.Service, logger *slog.Logger) *Handler {
 func (h *Handler) Router() *chi.Mux {
 	r := chi.NewRouter()
 
-	// Add middleware in correct order
-	r.Use(middleware.RequestID)      // First: generates request IDs
-	r.Use(middleware.RealIP)         // Uses X-Forwarded-For if present
-	r.Use(middleware.Recoverer)      // Recovers from panics
-	r.Use(requestIDHeaderMiddleware) // Adds ID to response headers
-	r.Use(logMiddleware(h.logger))   // Last: logs with all context
+	// Middleware in dependency order
+	r.Use(middleware.RequestID)
+	r.Use(requestIDHeaderMiddleware)
+	r.Use(middleware.RealIP)
+	r.Use(middleware.Recoverer)
+	r.Use(logMiddleware(h.logger))
 
 	// API Routes v1alpha1
 	r.Route("/api/v1alpha1/displays", func(r chi.Router) {
-		// Display registration
 		r.Post("/", h.RegisterDisplay)
-
-		// Display management
 		r.Route("/{id}", func(r chi.Router) {
 			r.Get("/", h.GetDisplay)
 			r.Put("/activate", h.ActivateDisplay)
 			r.Put("/last-seen", h.UpdateLastSeen)
 		})
-
-		// WebSocket endpoint
 		r.Get("/ws", h.ServeWs)
 	})
 
