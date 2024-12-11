@@ -76,6 +76,24 @@ func NewClient(baseURL string, options ...ClientOption) (*Client, error) {
 	return c, nil
 }
 
+// RequestError represents an error returned by the API
+type RequestError struct {
+	StatusCode int
+	Code       string
+	Message    string
+	URL        string
+	Method     string
+}
+
+func (e *RequestError) Error() string {
+	if e.Code != "" {
+		return fmt.Sprintf("%s request to %s failed (%d %s): %s",
+			e.Method, e.URL, e.StatusCode, e.Code, e.Message)
+	}
+	return fmt.Sprintf("%s request to %s failed (%d): %s",
+		e.Method, e.URL, e.StatusCode, e.Message)
+}
+
 // doRequest performs an HTTP request with automatic error handling
 func (c *Client) doRequest(ctx context.Context, method, pathStr string, body interface{}) (*http.Response, error) {
 	// Build full URL
@@ -110,17 +128,31 @@ func (c *Client) doRequest(ctx context.Context, method, pathStr string, body int
 	// Perform request
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("error performing request: %w", err)
+		return nil, fmt.Errorf("request failed: %w", err)
 	}
 
 	// Check for API errors
 	if resp.StatusCode >= 400 {
 		defer resp.Body.Close()
+
 		var apiErr v1alpha1.Error
 		if err := json.NewDecoder(resp.Body).Decode(&apiErr); err != nil {
-			return nil, fmt.Errorf("HTTP %d: unable to decode error response", resp.StatusCode)
+			// If we can't decode the error response, create a generic one
+			return nil, &RequestError{
+				StatusCode: resp.StatusCode,
+				Message:    fmt.Sprintf("server returned %s", resp.Status),
+				URL:        u.String(),
+				Method:     method,
+			}
 		}
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, apiErr.Message)
+
+		return nil, &RequestError{
+			StatusCode: resp.StatusCode,
+			Code:       apiErr.Code,
+			Message:    apiErr.Message,
+			URL:        u.String(),
+			Method:     method,
+		}
 	}
 
 	return resp, nil

@@ -2,11 +2,13 @@ package display
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/wrale/wrale-signage/api/types/v1alpha1"
+	"github.com/wrale/wrale-signage/internal/wsignctl/client"
 	"github.com/wrale/wrale-signage/internal/wsignctl/util"
 )
 
@@ -50,7 +52,7 @@ connected to the displays.{domain} endpoint.`,
 
 			client, err := util.GetClientFromCommand(cmd)
 			if err != nil {
-				return err
+				return fmt.Errorf("client setup failed: %w", err)
 			}
 
 			// Generate default name from site and position
@@ -70,7 +72,29 @@ connected to the displays.{domain} endpoint.`,
 			// Attempt to activate the display
 			display, err := client.ActivateDisplay(cmd.Context(), reg)
 			if err != nil {
-				return fmt.Errorf("error activating display: %w", err)
+				// Check for API error
+				var reqErr *client.RequestError
+				if strings.Contains(err.Error(), "activation code not found") {
+					fmt.Fprintf(os.Stderr, "Error: The activation code %q was not found.\n", code)
+					fmt.Fprintf(os.Stderr, "Make sure:\n")
+					fmt.Fprintf(os.Stderr, "  1. The display is online and showing the code\n")
+					fmt.Fprintf(os.Stderr, "  2. You've entered the code exactly as shown\n")
+					fmt.Fprintf(os.Stderr, "  3. The code hasn't expired (valid for 15 minutes)\n")
+					return fmt.Errorf("invalid activation code")
+				} else if strings.Contains(err.Error(), "display already exists") {
+					fmt.Fprintf(os.Stderr, "Error: A display named %q already exists.\n", displayName)
+					fmt.Fprintf(os.Stderr, "Either:\n")
+					fmt.Fprintf(os.Stderr, "  1. Choose a different site/zone/position combination\n")
+					fmt.Fprintf(os.Stderr, "  2. Delete the existing display first\n")
+					return fmt.Errorf("display name conflict")
+				} else if strings.Contains(err.Error(), "404") {
+					fmt.Fprintf(os.Stderr, "Error: The display activation endpoint was not found.\n")
+					fmt.Fprintf(os.Stderr, "Make sure:\n")
+					fmt.Fprintf(os.Stderr, "  1. The API server URL is correct\n")
+					fmt.Fprintf(os.Stderr, "  2. The server is running and reachable\n")
+					return fmt.Errorf("endpoint not found")
+				}
+				return fmt.Errorf("display activation failed: %w", err)
 			}
 
 			// Format and display the result
@@ -106,7 +130,7 @@ connected to the displays.{domain} endpoint.`,
 	cmd.Flags().StringArrayVar(&labels, "label", nil, "Additional labels in key=value format")
 	cmd.Flags().StringVarP(&output, "output", "o", "", "Output format (json)")
 
-	// Mark required flags and handle potential errors
+	// Mark required flags
 	requiredFlags := []string{"site", "zone", "position"}
 	for _, flag := range requiredFlags {
 		if err := cmd.MarkFlagRequired(flag); err != nil {
