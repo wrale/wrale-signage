@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 
 	"github.com/google/uuid"
 
@@ -15,12 +16,13 @@ import (
 
 // Repository implements the display.Repository interface using PostgreSQL
 type Repository struct {
-	db *sql.DB
+	db     *sql.DB
+	logger *slog.Logger
 }
 
 // NewRepository creates a new PostgreSQL display repository
-func NewRepository(db *sql.DB) display.Repository {
-	return &Repository{db: db}
+func NewRepository(db *sql.DB, logger *slog.Logger) display.Repository {
+	return &Repository{db: db, logger: logger}
 }
 
 // Save persists a display to the database, handling both creation and updates
@@ -30,6 +32,11 @@ func (r *Repository) Save(ctx context.Context, d *display.Display) error {
 	// Convert properties to JSON
 	properties, err := json.Marshal(d.Properties)
 	if err != nil {
+		r.logger.Error("failed to marshal properties",
+			"error", err,
+			"displayID", d.ID,
+			"operation", op,
+		)
 		return fmt.Errorf("error marshaling properties: %w", err)
 	}
 
@@ -42,6 +49,12 @@ func (r *Repository) Save(ctx context.Context, d *display.Display) error {
 
 		if err != nil {
 			if err == sql.ErrNoRows {
+				r.logger.Info("creating new display",
+					"displayID", d.ID,
+					"name", d.Name,
+					"state", d.State,
+					"operation", op,
+				)
 				// Insert new display
 				_, err = tx.ExecContext(ctx, `
 					INSERT INTO displays (
@@ -60,15 +73,40 @@ func (r *Repository) Save(ctx context.Context, d *display.Display) error {
 					properties,
 				)
 				if err != nil {
+					r.logger.Error("failed to insert display",
+						"error", err,
+						"displayID", d.ID,
+						"operation", op,
+					)
 					return err
 				}
 				return nil
 			}
+			r.logger.Error("failed to check display version",
+				"error", err,
+				"displayID", d.ID,
+				"operation", op,
+			)
 			return err
 		}
 
+		r.logger.Info("updating display",
+			"displayID", d.ID,
+			"name", d.Name,
+			"currentVersion", currentVersion,
+			"newVersion", d.Version,
+			"newState", d.State,
+			"operation", op,
+		)
+
 		// Verify version for optimistic locking
 		if currentVersion != d.Version {
+			r.logger.Warn("version mismatch",
+				"displayID", d.ID,
+				"currentVersion", currentVersion,
+				"expectedVersion", d.Version,
+				"operation", op,
+			)
 			return display.ErrVersionMismatch{ID: d.ID.String()}
 		}
 
@@ -98,23 +136,50 @@ func (r *Repository) Save(ctx context.Context, d *display.Display) error {
 			d.Version,
 		)
 		if err != nil {
+			r.logger.Error("failed to update display",
+				"error", err,
+				"displayID", d.ID,
+				"operation", op,
+			)
 			return err
 		}
 
 		rows, err := result.RowsAffected()
 		if err != nil {
+			r.logger.Error("failed to get rows affected",
+				"error", err,
+				"displayID", d.ID,
+				"operation", op,
+			)
 			return err
 		}
 		if rows == 0 {
+			r.logger.Error("display not found during update",
+				"displayID", d.ID,
+				"operation", op,
+			)
 			return display.ErrNotFound{ID: d.ID.String()}
 		}
 
 		// Update version on success
 		d.Version++
+
+		r.logger.Info("successfully updated display",
+			"displayID", d.ID,
+			"name", d.Name,
+			"newVersion", d.Version,
+			"newState", d.State,
+			"operation", op,
+		)
 		return nil
 	})
 
 	if err != nil {
+		r.logger.Error("failed to save display",
+			"error", err,
+			"displayID", d.ID,
+			"operation", op,
+		)
 		return database.MapError(err, op)
 	}
 
@@ -146,13 +211,37 @@ func (r *Repository) FindByID(ctx context.Context, id uuid.UUID) (*display.Displ
 		&propertiesJSON,
 	)
 	if err != nil {
+		if err == sql.ErrNoRows {
+			r.logger.Warn("display not found",
+				"displayID", id,
+				"operation", op,
+			)
+		} else {
+			r.logger.Error("failed to find display",
+				"error", err,
+				"displayID", id,
+				"operation", op,
+			)
+		}
 		return nil, database.MapError(err, op)
 	}
 
 	if err := json.Unmarshal(propertiesJSON, &d.Properties); err != nil {
+		r.logger.Error("failed to unmarshal properties",
+			"error", err,
+			"displayID", id,
+			"operation", op,
+		)
 		return nil, fmt.Errorf("error unmarshaling properties: %w", err)
 	}
 
+	r.logger.Info("found display",
+		"displayID", id,
+		"name", d.Name,
+		"state", d.State,
+		"version", d.Version,
+		"operation", op,
+	)
 	return &d, nil
 }
 
@@ -181,13 +270,37 @@ func (r *Repository) FindByName(ctx context.Context, name string) (*display.Disp
 		&propertiesJSON,
 	)
 	if err != nil {
+		if err == sql.ErrNoRows {
+			r.logger.Warn("display not found by name",
+				"name", name,
+				"operation", op,
+			)
+		} else {
+			r.logger.Error("failed to find display by name",
+				"error", err,
+				"name", name,
+				"operation", op,
+			)
+		}
 		return nil, database.MapError(err, op)
 	}
 
 	if err := json.Unmarshal(propertiesJSON, &d.Properties); err != nil {
+		r.logger.Error("failed to unmarshal properties",
+			"error", err,
+			"name", name,
+			"operation", op,
+		)
 		return nil, fmt.Errorf("error unmarshaling properties: %w", err)
 	}
 
+	r.logger.Info("found display by name",
+		"name", name,
+		"displayID", d.ID,
+		"state", d.State,
+		"version", d.Version,
+		"operation", op,
+	)
 	return &d, nil
 }
 
@@ -224,6 +337,11 @@ func (r *Repository) List(ctx context.Context, filter display.DisplayFilter) ([]
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
+		r.logger.Error("failed to list displays",
+			"error", err,
+			"filter", filter,
+			"operation", op,
+		)
 		return nil, database.MapError(err, op)
 	}
 	defer rows.Close()
@@ -245,10 +363,19 @@ func (r *Repository) List(ctx context.Context, filter display.DisplayFilter) ([]
 			&propertiesJSON,
 		)
 		if err != nil {
+			r.logger.Error("failed to scan display row",
+				"error", err,
+				"operation", op,
+			)
 			return nil, database.MapError(err, op)
 		}
 
 		if err := json.Unmarshal(propertiesJSON, &d.Properties); err != nil {
+			r.logger.Error("failed to unmarshal properties",
+				"error", err,
+				"displayID", d.ID,
+				"operation", op,
+			)
 			return nil, fmt.Errorf("error unmarshaling properties: %w", err)
 		}
 
@@ -256,9 +383,18 @@ func (r *Repository) List(ctx context.Context, filter display.DisplayFilter) ([]
 	}
 
 	if err := rows.Err(); err != nil {
+		r.logger.Error("error iterating display rows",
+			"error", err,
+			"operation", op,
+		)
 		return nil, database.MapError(err, op)
 	}
 
+	r.logger.Info("listed displays",
+		"count", len(displays),
+		"filter", filter,
+		"operation", op,
+	)
 	return displays, nil
 }
 
@@ -271,17 +407,35 @@ func (r *Repository) Delete(ctx context.Context, id uuid.UUID) error {
 		WHERE id = $1
 	`, id)
 	if err != nil {
+		r.logger.Error("failed to delete display",
+			"error", err,
+			"displayID", id,
+			"operation", op,
+		)
 		return database.MapError(err, op)
 	}
 
 	rows, err := result.RowsAffected()
 	if err != nil {
+		r.logger.Error("failed to get rows affected",
+			"error", err,
+			"displayID", id,
+			"operation", op,
+		)
 		return database.MapError(err, op)
 	}
 
 	if rows == 0 {
+		r.logger.Warn("display not found during delete",
+			"displayID", id,
+			"operation", op,
+		)
 		return database.MapError(sql.ErrNoRows, op)
 	}
 
+	r.logger.Info("deleted display",
+		"displayID", id,
+		"operation", op,
+	)
 	return nil
 }
