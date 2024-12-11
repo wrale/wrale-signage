@@ -67,7 +67,7 @@ func NewDisplay(name string, location Location) (*Display, error) {
 		Location:   location,
 		State:      StateUnregistered,
 		LastSeen:   time.Now(),
-		Version:    1,
+		Version:    0, // Start at 0 for insert
 		Properties: make(map[string]string),
 	}, nil
 }
