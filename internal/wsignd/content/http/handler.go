@@ -40,10 +40,11 @@ func (h *Handler) CreateContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update status fields
-	req.Status.LastValidated = time.Now()
-	req.Status.IsHealthy = true
-	req.Status.Version = 1
+	// Create content
+	if err := h.service.CreateContent(r.Context(), &req); err != nil {
+		http.Error(w, "failed to create content: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	// Return created content
 	w.Header().Set("Content-Type", "application/json")

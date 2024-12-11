@@ -21,4 +21,4 @@ CREATE INDEX content_sources_healthy_idx ON content_sources(is_healthy);
 CREATE TRIGGER content_sources_update_timestamps
     BEFORE UPDATE ON content_sources
     FOR EACH ROW
-    EXECUTE FUNCTION update_timestamp();
+    EXECUTE FUNCTION update_updated_at_column();
