@@ -25,6 +25,9 @@ func NewRouter(h *Handler) chi.Router {
 			r.Put("/activate", h.ActivateDisplay)
 			r.Put("/last-seen", h.UpdateLastSeen)
 		})
+
+		// WebSocket control endpoint
+		r.Get("/ws", h.ServeWs)
 	})
 
 	return r

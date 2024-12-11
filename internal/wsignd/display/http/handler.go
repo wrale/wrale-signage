@@ -2,6 +2,7 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -16,14 +17,18 @@ import (
 type Handler struct {
 	service display.Service
 	logger  *slog.Logger
+	hub     *Hub
 }
 
 // NewHandler creates a new display HTTP handler
 func NewHandler(service display.Service, logger *slog.Logger) *Handler {
-	return &Handler{
+	h := &Handler{
 		service: service,
 		logger:  logger,
 	}
+	h.hub = newHub(logger)
+	go h.hub.run(context.Background()) // TODO: manage lifecycle with context
+	return h
 }
 
 // RegisterDisplay handles display registration requests
