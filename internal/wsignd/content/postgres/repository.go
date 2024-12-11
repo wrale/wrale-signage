@@ -130,33 +130,43 @@ func (r *repository) GetURLMetrics(ctx context.Context, url string, since time.T
 			return err
 		}
 
-		// Get average timing metrics for successful loads only
+		// Extract and average metrics using proper JSONB path extraction
 		err = tx.QueryRowContext(ctx, `
-			WITH valid_metrics AS (
+			WITH load_metrics AS (
 				SELECT 
-					(metrics->>'loadTime')::numeric AS load_time,
-					(metrics->>'renderTime')::numeric AS render_time
+					(CASE 
+						WHEN metrics ? 'loadTime' AND jsonb_typeof(metrics->'loadTime') = 'number'
+						THEN (metrics->>'loadTime')::numeric
+						ELSE NULL
+					END) as load_time,
+					(CASE 
+						WHEN metrics ? 'renderTime' AND jsonb_typeof(metrics->'renderTime') = 'number'
+						THEN (metrics->>'renderTime')::numeric
+						ELSE NULL
+					END) as render_time
 				FROM content_events 
 				WHERE url = $1 
 					AND timestamp >= $2
 					AND type = 'CONTENT_LOADED'
 					AND metrics IS NOT NULL
-					AND metrics ? 'loadTime'
-					AND metrics ? 'renderTime'
 			)
 			SELECT 
-				COALESCE(ROUND(AVG(load_time))::bigint, 0),
-				COALESCE(ROUND(AVG(render_time))::bigint, 0)
-			FROM valid_metrics
+				COALESCE(AVG(load_time), 0)::float8,
+				COALESCE(AVG(render_time), 0)::float8
+			FROM load_metrics
+			WHERE load_time IS NOT NULL 
+				OR render_time IS NOT NULL
 		`, url, since).Scan(&metrics.AvgLoadTime, &metrics.AvgRenderTime)
 		if err != nil && err != sql.ErrNoRows {
 			return err
 		}
 
-		// Get error rates by code using total event count as denominator
+		// Calculate error rates by code with proper precision
 		rows, err := tx.QueryContext(ctx, `
 			WITH error_counts AS (
-				SELECT error->>'code' as error_code, COUNT(*) as code_count
+				SELECT 
+					error->>'code' as error_code,
+					COUNT(*) as code_count
 				FROM content_events
 				WHERE url = $1 
 					AND timestamp >= $2
@@ -166,13 +176,16 @@ func (r *repository) GetURLMetrics(ctx context.Context, url string, since time.T
 				GROUP BY error->>'code'
 			),
 			total AS (
-				SELECT COUNT(*) as total_count
+				SELECT COUNT(*)::numeric as total_count
 				FROM content_events 
 				WHERE url = $1 AND timestamp >= $2
 			)
 			SELECT 
 				error_code,
-				ROUND((code_count::float / NULLIF(total_count, 0))::numeric, 4)
+				ROUND(
+					(code_count::numeric / NULLIF(total_count, 0)::numeric)::numeric,
+					4
+				)::float8
 			FROM error_counts, total
 			WHERE total_count > 0
 		`, url, since)
