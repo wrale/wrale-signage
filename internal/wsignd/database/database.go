@@ -6,6 +6,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/lib/pq"
@@ -23,6 +26,72 @@ type TxOptions struct {
 	Isolation sql.IsolationLevel
 	// ReadOnly indicates if the transaction is read-only
 	ReadOnly bool
+}
+
+// RunMigrations executes all SQL migrations in the specified directory
+func RunMigrations(db *sql.DB, migrationsPath string) error {
+	// Create migrations table if it doesn't exist
+	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS schema_migrations (
+			version TEXT PRIMARY KEY,
+			applied_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create migrations table: %w", err)
+	}
+
+	// Get list of migration files
+	files, err := os.ReadDir(migrationsPath)
+	if err != nil {
+		return fmt.Errorf("failed to read migrations directory: %w", err)
+	}
+
+	// Execute each migration in transaction
+	for _, file := range files {
+		if !strings.HasSuffix(file.Name(), ".sql") {
+			continue
+		}
+
+		// Check if migration already applied
+		var exists bool
+		err = db.QueryRow("SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = $1)", file.Name()).Scan(&exists)
+		if err != nil {
+			return fmt.Errorf("failed to check migration status: %w", err)
+		}
+		if exists {
+			continue
+		}
+
+		// Read migration file
+		migrationPath := filepath.Join(migrationsPath, file.Name())
+		content, err := os.ReadFile(migrationPath)
+		if err != nil {
+			return fmt.Errorf("failed to read migration %s: %w", file.Name(), err)
+		}
+
+		// Execute migration in transaction
+		tx, err := db.Begin()
+		if err != nil {
+			return fmt.Errorf("failed to start transaction for migration %s: %w", file.Name(), err)
+		}
+
+		if _, err := tx.Exec(string(content)); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to execute migration %s: %w", file.Name(), err)
+		}
+
+		if _, err := tx.Exec("INSERT INTO schema_migrations (version) VALUES ($1)", file.Name()); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to record migration %s: %w", file.Name(), err)
+		}
+
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("failed to commit migration %s: %w", file.Name(), err)
+		}
+	}
+
+	return nil
 }
 
 // RunInTx executes a function within a transaction

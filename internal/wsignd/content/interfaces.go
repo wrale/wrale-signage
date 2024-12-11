@@ -6,6 +6,14 @@ import (
 	"github.com/google/uuid"
 )
 
+// Service defines the content service interface
+type Service interface {
+	ReportEvents(ctx context.Context, batch EventBatch) error
+	GetURLHealth(ctx context.Context, url string) (*HealthStatus, error)
+	GetURLMetrics(ctx context.Context, url string) (*URLMetrics, error)
+	ValidateContent(ctx context.Context, url string) error
+}
+
 type EventProcessor interface {
 	ProcessEvents(ctx context.Context, batch EventBatch) error
 }

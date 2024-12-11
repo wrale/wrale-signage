@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -27,12 +28,23 @@ func (m *mockService) ReportEvents(ctx context.Context, batch content.EventBatch
 
 func (m *mockService) GetURLHealth(ctx context.Context, url string) (*content.HealthStatus, error) {
 	args := m.Called(ctx, url)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
 	return args.Get(0).(*content.HealthStatus), args.Error(1)
 }
 
 func (m *mockService) GetURLMetrics(ctx context.Context, url string) (*content.URLMetrics, error) {
 	args := m.Called(ctx, url)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
 	return args.Get(0).(*content.URLMetrics), args.Error(1)
+}
+
+func (m *mockService) ValidateContent(ctx context.Context, url string) error {
+	args := m.Called(ctx, url)
+	return args.Error(0)
 }
 
 func TestReportEvents(t *testing.T) {
