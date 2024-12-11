@@ -15,6 +15,11 @@ func (h *Handler) handleCreateContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := h.service.ValidateContent(r.Context(), source.Spec.URL); err != nil {
+		h.respondError(w, err)
+		return
+	}
+
 	if err := h.service.CreateContent(r.Context(), source); err != nil {
 		h.respondError(w, err)
 		return

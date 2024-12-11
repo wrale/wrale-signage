@@ -226,17 +226,40 @@ func (r *repository) ListContent(ctx context.Context) ([]v1alpha1.ContentSource,
 func (r *repository) SaveEvent(ctx context.Context, event content.Event) error {
 	const op = "ContentRepository.SaveEvent"
 
-	metrics, err := json.Marshal(event.Metrics)
+	var metrics map[string]interface{}
+	if event.Metrics != nil {
+		metrics = map[string]interface{}{
+			"loadTime":        event.Metrics.LoadTime,
+			"renderTime":      event.Metrics.RenderTime,
+			"interactiveTime": event.Metrics.InteractiveTime,
+		}
+		if event.Metrics.ResourceStats != nil {
+			metrics["resourceStats"] = event.Metrics.ResourceStats
+		}
+	}
+
+	var errorData map[string]interface{}
+	if event.Error != nil {
+		errorData = map[string]interface{}{
+			"code":    event.Error.Code,
+			"message": event.Error.Message,
+		}
+		if event.Error.Details != nil {
+			errorData["details"] = event.Error.Details
+		}
+	}
+
+	metricsJSON, err := json.Marshal(metrics)
 	if err != nil {
 		return database.MapError(err, op)
 	}
 
-	errorData, err := json.Marshal(event.Error)
+	errorJSON, err := json.Marshal(errorData)
 	if err != nil {
 		return database.MapError(err, op)
 	}
 
-	contextData, err := json.Marshal(event.Context)
+	contextJSON, err := json.Marshal(event.Context)
 	if err != nil {
 		return database.MapError(err, op)
 	}
@@ -266,9 +289,9 @@ func (r *repository) SaveEvent(ctx context.Context, event content.Event) error {
 			event.Type,
 			event.URL,
 			event.Timestamp,
-			errorData,
-			metrics,
-			contextData,
+			errorJSON,
+			metricsJSON,
+			contextJSON,
 		)
 		return err
 	})
@@ -312,24 +335,16 @@ func (r *repository) GetURLMetrics(ctx context.Context, url string, since time.T
 
 		// Get average timing metrics
 		err = tx.QueryRowContext(ctx, `
-			WITH valid_metrics AS (
-				SELECT 
-					(metrics->>'loadTime')::float8 as load_time,
-					(metrics->>'renderTime')::float8 as render_time
-				FROM content_events 
-				WHERE url = $1 
-					AND timestamp >= $2
-					AND type = 'CONTENT_LOADED'
-					AND metrics IS NOT NULL
-					AND metrics ? 'loadTime' 
-					AND metrics ? 'renderTime'
-					AND jsonb_typeof(metrics->'loadTime') = 'number'
-					AND jsonb_typeof(metrics->'renderTime') = 'number'
-			)
 			SELECT 
-				COALESCE(AVG(load_time), 0),
-				COALESCE(AVG(render_time), 0)
-			FROM valid_metrics
+				COALESCE(AVG((metrics->>'loadTime')::numeric), 0),
+				COALESCE(AVG((metrics->>'renderTime')::numeric), 0)
+			FROM content_events 
+			WHERE url = $1 
+				AND timestamp >= $2
+				AND type = 'CONTENT_LOADED'
+				AND metrics IS NOT NULL
+				AND metrics->>'loadTime' IS NOT NULL
+				AND metrics->>'renderTime' IS NOT NULL
 		`, url, since).Scan(&metrics.AvgLoadTime, &metrics.AvgRenderTime)
 		if err != nil && err != sql.ErrNoRows {
 			return err
@@ -346,8 +361,7 @@ func (r *repository) GetURLMetrics(ctx context.Context, url string, since time.T
 					AND timestamp >= $2
 					AND type = 'CONTENT_ERROR'
 					AND error IS NOT NULL
-					AND error ? 'code'
-					AND jsonb_typeof(error->'code') = 'string'
+					AND error->>'code' IS NOT NULL
 				GROUP BY error->>'code'
 			),
 			total AS (
@@ -357,7 +371,7 @@ func (r *repository) GetURLMetrics(ctx context.Context, url string, since time.T
 			)
 			SELECT 
 				error_code,
-				code_count / NULLIF(total_count, 0)
+				COALESCE(code_count / NULLIF(total_count, 0), 0)
 			FROM error_counts, total
 		`, url, since)
 		if err != nil {
