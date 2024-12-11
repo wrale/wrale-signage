@@ -20,6 +20,7 @@ import (
 	"github.com/wrale/wrale-signage/internal/wsignd/display"
 	displayhttp "github.com/wrale/wrale-signage/internal/wsignd/display/http"
 	"github.com/wrale/wrale-signage/internal/wsignd/display/postgres"
+	"github.com/wrale/wrale-signage/internal/wsignd/display/service"
 )
 
 func main() {
@@ -147,11 +148,11 @@ func setupRouter(cfg *config.Config, db *sql.DB, logger *slog.Logger) http.Handl
 	// Set up display service dependencies
 	repo := postgres.NewRepository(db)
 	publisher := &noopEventPublisher{} // TODO: Implement real event publisher
-	service := display.NewService(repo, publisher)
+	service := service.New(repo, publisher)
 
 	// Create and mount display handlers
 	displayHandler := displayhttp.NewHandler(service, logger)
-	r.Mount("/", displayhttp.NewRouter(displayHandler))
+	r.Mount("/", displayHandler.Router())
 
 	return r
 }
