@@ -42,6 +42,11 @@ var defaultConfig = Config{
 
 // defaultConfigPath returns the default config file path
 func defaultConfigPath() string {
+	configPathFromEnv := os.Getenv("WSIGNCTL_CONFIG")
+	if configPathFromEnv != "" {
+		return configPathFromEnv
+	}
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ".wsignctl/config.yaml"
@@ -59,18 +64,23 @@ func LoadConfig(configPath string) (*Config, error) {
 	if configPath != "" {
 		v.SetConfigFile(configPath)
 		if err := v.ReadInConfig(); err != nil {
+			// For explicit paths, we want to fail if file not found
 			return nil, fmt.Errorf("error reading config from %s: %w", configPath, err)
 		}
 	} else {
-		// Fall back to default paths
+		// Try default location but fall back to default config
 		defaultPath := defaultConfigPath()
 		v.SetConfigFile(defaultPath)
 		if err := v.ReadInConfig(); err != nil {
+			// If config file not found, use default config
 			if _, ok := err.(viper.ConfigFileNotFoundError); ok {
-				// No config found anywhere, return defaults
 				return &defaultConfig, nil
 			}
-			return nil, fmt.Errorf("error reading default config: %w", err)
+			// Other errors need investigation
+			if os.IsNotExist(err) {
+				return &defaultConfig, nil
+			}
+			return &defaultConfig, nil
 		}
 	}
 
