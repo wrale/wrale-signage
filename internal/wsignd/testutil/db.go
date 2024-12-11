@@ -41,7 +41,9 @@ func SetupTestDB(t *testing.T) (*sql.DB, func()) {
 			break
 		}
 		t.Logf("Failed to ping database (attempt %d/%d): %v", i+1, maxRetries, err)
-		db.Close()
+		if cerr := db.Close(); cerr != nil {
+			t.Logf("Failed to close failed connection: %v", cerr)
+		}
 		time.Sleep(retryDelay)
 	}
 
@@ -62,7 +64,9 @@ func SetupTestDB(t *testing.T) (*sql.DB, func()) {
 	require.NoError(t, err)
 
 	cleanup := func() {
-		db.Close()
+		if err := db.Close(); err != nil {
+			t.Logf("Failed to close test database: %v", err)
+		}
 	}
 
 	return db, cleanup
