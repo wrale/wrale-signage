@@ -1,4 +1,3 @@
-// Package http provides HTTP handlers for the display service
 package http
 
 import (
@@ -270,7 +269,8 @@ func (h *Handler) ActivateDisplay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.service.Activate(r.Context(), id); err != nil {
+	d, err := h.service.Activate(r.Context(), id)
+	if err != nil {
 		h.logger.Error("failed to activate display",
 			"error", err,
 			"id", id,
@@ -279,7 +279,39 @@ func (h *Handler) ActivateDisplay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	// Convert to API type
+	resp := &v1alpha1.Display{
+		TypeMeta: v1alpha1.TypeMeta{
+			Kind:       "Display",
+			APIVersion: "v1alpha1",
+		},
+		ObjectMeta: v1alpha1.ObjectMeta{
+			ID:   d.ID,
+			Name: d.Name,
+		},
+		Spec: v1alpha1.DisplaySpec{
+			Location: v1alpha1.DisplayLocation{
+				SiteID:   d.Location.SiteID,
+				Zone:     d.Location.Zone,
+				Position: d.Location.Position,
+			},
+			Properties: d.Properties,
+		},
+		Status: v1alpha1.DisplayStatus{
+			State:    v1alpha1.DisplayState(d.State),
+			LastSeen: d.LastSeen,
+			Version:  d.Version,
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		h.logger.Error("failed to encode response",
+			"error", err,
+		)
+		h.writeError(w, werrors.NewError("INTERNAL", "failed to encode response", "ActivateDisplay", err), http.StatusInternalServerError)
+		return
+	}
 }
 
 // UpdateLastSeen updates the display's last seen timestamp

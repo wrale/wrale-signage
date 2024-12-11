@@ -50,7 +50,7 @@ type Service interface {
 	UpdateLocation(ctx context.Context, id uuid.UUID, location Location) error
 
 	// Activate transitions a display to the active state
-	Activate(ctx context.Context, id uuid.UUID) error
+	Activate(ctx context.Context, id uuid.UUID) (*Display, error)
 
 	// Disable transitions a display to the disabled state
 	Disable(ctx context.Context, id uuid.UUID) error

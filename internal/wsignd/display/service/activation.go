@@ -12,29 +12,29 @@ import (
 )
 
 // Activate transitions a display to the active state
-func (s *Service) Activate(ctx context.Context, id uuid.UUID) error {
+func (s *Service) Activate(ctx context.Context, id uuid.UUID) (*display.Display, error) {
 	const op = "DisplayService.Activate"
 
 	// Get current display state
 	d, err := s.repo.FindByID(ctx, id)
 	if err != nil {
 		if errors.IsNotFound(err) {
-			return errors.NewError("NOT_FOUND", fmt.Sprintf("Display not found: %s", id), op, err)
+			return nil, errors.NewError("NOT_FOUND", fmt.Sprintf("Display not found: %s", id), op, err)
 		}
-		return errors.NewError("LOOKUP_FAILED", "Failed to retrieve display", op, err)
+		return nil, errors.NewError("LOOKUP_FAILED", "Failed to retrieve display", op, err)
 	}
 
 	// Activate through domain model
 	if err := d.Activate(); err != nil {
-		return err // Domain model errors are already properly typed
+		return nil, err // Domain model errors are already properly typed
 	}
 
 	// Persist changes
 	if err := s.repo.Save(ctx, d); err != nil {
 		if errors.IsVersionMismatch(err) {
-			return errors.NewError("VERSION_CONFLICT", "Display was modified", op, err)
+			return nil, errors.NewError("VERSION_CONFLICT", "Display was modified", op, err)
 		}
-		return errors.NewError("SAVE_FAILED", "Failed to save state change", op, err)
+		return nil, errors.NewError("SAVE_FAILED", "Failed to save state change", op, err)
 	}
 
 	// Publish activated event
@@ -54,7 +54,7 @@ func (s *Service) Activate(ctx context.Context, id uuid.UUID) error {
 		fmt.Printf("Failed to publish activated event: %v\n", err)
 	}
 
-	return nil
+	return d, nil
 }
 
 // Disable transitions a display to the disabled state
