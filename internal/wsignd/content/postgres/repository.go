@@ -16,7 +16,7 @@ type repository struct {
 	db *sql.DB
 }
 
-func NewRepository(db *sql.DB) *repository {
+func NewRepository(db *sql.DB) content.Repository {
 	return &repository{db: db}
 }
 
@@ -35,14 +35,6 @@ func (r *repository) CreateContent(ctx context.Context, content *v1alpha1.Conten
 				last_validated, is_healthy, version,
 				playback_duration
 			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-			ON CONFLICT (name) DO UPDATE SET
-				url = EXCLUDED.url,
-				type = EXCLUDED.type,
-				properties = EXCLUDED.properties,
-				last_validated = EXCLUDED.last_validated,
-				is_healthy = EXCLUDED.is_healthy,
-				version = EXCLUDED.version + 1,
-				playback_duration = EXCLUDED.playback_duration
 		`,
 			content.ObjectMeta.Name,
 			content.Spec.URL,
@@ -63,41 +55,188 @@ func (r *repository) CreateContent(ctx context.Context, content *v1alpha1.Conten
 	return nil
 }
 
+func (r *repository) UpdateContent(ctx context.Context, content *v1alpha1.ContentSource) error {
+	const op = "ContentRepository.UpdateContent"
+
+	err := database.RunInTx(ctx, r.db, nil, func(tx *database.Tx) error {
+		props, err := json.Marshal(content.Spec.Properties)
+		if err != nil {
+			return err
+		}
+
+		result, err := tx.ExecContext(ctx, `
+			UPDATE content_sources SET
+				url = $2,
+				type = $3,
+				properties = $4,
+				last_validated = $5,
+				is_healthy = $6,
+				version = $7,
+				playback_duration = $8,
+				updated_at = NOW()
+			WHERE name = $1
+		`,
+			content.ObjectMeta.Name,
+			content.Spec.URL,
+			content.Spec.Type,
+			props,
+			content.Status.LastValidated,
+			content.Status.IsHealthy,
+			content.Status.Version,
+			content.Spec.PlaybackDuration,
+		)
+		if err != nil {
+			return err
+		}
+
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rows == 0 {
+			return sql.ErrNoRows
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return database.MapError(err, op)
+	}
+
+	return nil
+}
+
+func (r *repository) DeleteContent(ctx context.Context, name string) error {
+	const op = "ContentRepository.DeleteContent"
+
+	err := database.RunInTx(ctx, r.db, nil, func(tx *database.Tx) error {
+		result, err := tx.ExecContext(ctx, `DELETE FROM content_sources WHERE name = $1`, name)
+		if err != nil {
+			return err
+		}
+
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rows == 0 {
+			return sql.ErrNoRows
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return database.MapError(err, op)
+	}
+
+	return nil
+}
+
+func (r *repository) GetContent(ctx context.Context, name string) (*v1alpha1.ContentSource, error) {
+	const op = "ContentRepository.GetContent"
+
+	var source v1alpha1.ContentSource
+	source.ObjectMeta.Name = name
+
+	err := database.RunInTx(ctx, r.db, &database.TxOptions{ReadOnly: true}, func(tx *database.Tx) error {
+		var props []byte
+		err := tx.QueryRowContext(ctx, `
+			SELECT url, type, properties, last_validated, is_healthy, version, playback_duration
+			FROM content_sources 
+			WHERE name = $1
+		`, name).Scan(
+			&source.Spec.URL,
+			&source.Spec.Type,
+			&props,
+			&source.Status.LastValidated,
+			&source.Status.IsHealthy,
+			&source.Status.Version,
+			&source.Spec.PlaybackDuration,
+		)
+		if err != nil {
+			return err
+		}
+
+		return json.Unmarshal(props, &source.Spec.Properties)
+	})
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, database.MapError(err, op)
+		}
+		return nil, database.MapError(err, op)
+	}
+
+	return &source, nil
+}
+
+func (r *repository) ListContent(ctx context.Context) ([]v1alpha1.ContentSource, error) {
+	const op = "ContentRepository.ListContent"
+
+	var sources []v1alpha1.ContentSource
+
+	err := database.RunInTx(ctx, r.db, &database.TxOptions{ReadOnly: true}, func(tx *database.Tx) error {
+		rows, err := tx.QueryContext(ctx, `
+			SELECT name, url, type, properties, last_validated, is_healthy, version, playback_duration
+			FROM content_sources
+			ORDER BY name
+		`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var source v1alpha1.ContentSource
+			var props []byte
+
+			err := rows.Scan(
+				&source.ObjectMeta.Name,
+				&source.Spec.URL,
+				&source.Spec.Type,
+				&props,
+				&source.Status.LastValidated,
+				&source.Status.IsHealthy,
+				&source.Status.Version,
+				&source.Spec.PlaybackDuration,
+			)
+			if err != nil {
+				return err
+			}
+
+			if err := json.Unmarshal(props, &source.Spec.Properties); err != nil {
+				return err
+			}
+
+			sources = append(sources, source)
+		}
+
+		return rows.Err()
+	})
+
+	if err != nil {
+		return nil, database.MapError(err, op)
+	}
+
+	return sources, nil
+}
+
 func (r *repository) SaveEvent(ctx context.Context, event content.Event) error {
 	const op = "ContentRepository.SaveEvent"
 
-	var metrics map[string]interface{}
-	if event.Metrics != nil {
-		metrics = map[string]interface{}{
-			"loadTime":        event.Metrics.LoadTime,
-			"renderTime":      event.Metrics.RenderTime,
-			"interactiveTime": event.Metrics.InteractiveTime,
-		}
-		if event.Metrics.ResourceStats != nil {
-			metrics["resourceStats"] = event.Metrics.ResourceStats
-		}
-	}
-	metricsJSON, err := json.Marshal(metrics)
+	metrics, err := json.Marshal(event.Metrics)
 	if err != nil {
 		return database.MapError(err, op)
 	}
 
-	var errorData map[string]interface{}
-	if event.Error != nil {
-		errorData = map[string]interface{}{
-			"code":    event.Error.Code,
-			"message": event.Error.Message,
-		}
-		if event.Error.Details != nil {
-			errorData["details"] = event.Error.Details
-		}
-	}
-	errorJSON, err := json.Marshal(errorData)
+	errorData, err := json.Marshal(event.Error)
 	if err != nil {
 		return database.MapError(err, op)
 	}
 
-	contextJSON, err := json.Marshal(event.Context)
+	contextData, err := json.Marshal(event.Context)
 	if err != nil {
 		return database.MapError(err, op)
 	}
@@ -113,10 +252,9 @@ func (r *repository) SaveEvent(ctx context.Context, event content.Event) error {
 			return err
 		}
 		if !exists {
-			return database.MapError(sql.ErrNoRows, op)
+			return sql.ErrNoRows
 		}
 
-		// Insert event
 		_, err = tx.ExecContext(ctx, `
 			INSERT INTO content_events (
 				id, display_id, type, url, timestamp,
@@ -128,9 +266,9 @@ func (r *repository) SaveEvent(ctx context.Context, event content.Event) error {
 			event.Type,
 			event.URL,
 			event.Timestamp,
-			errorJSON,
-			metricsJSON,
-			contextJSON,
+			errorData,
+			metrics,
+			contextData,
 		)
 		return err
 	})
@@ -160,11 +298,6 @@ func (r *repository) GetURLMetrics(ctx context.Context, url string, since time.T
 		`, url, since).Scan(&metrics.LoadCount, &metrics.ErrorCount)
 		if err != nil {
 			return err
-		}
-
-		// If no events found, return empty metrics
-		if metrics.LoadCount == 0 && metrics.ErrorCount == 0 {
-			return nil
 		}
 
 		// Get last seen timestamp
