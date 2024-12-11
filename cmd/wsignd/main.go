@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -22,15 +23,30 @@ import (
 )
 
 func main() {
+	// Parse command line flags
+	configPath := flag.String("config", "", "path to config file")
+	flag.Parse()
+
 	// Initialize structured logging with JSON format for easier parsing
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
 
-	// Load configuration from environment variables, with validation
-	cfg, err := config.Load()
-	if err != nil {
-		logger.Error("failed to load configuration", "error", err)
-		os.Exit(1)
+	// Load configuration
+	var cfg *config.Config
+	var err error
+
+	if *configPath != "" {
+		cfg, err = config.LoadFile(*configPath)
+		if err != nil {
+			logger.Error("failed to load config file", "error", err)
+			os.Exit(1)
+		}
+	} else {
+		cfg, err = config.Load()
+		if err != nil {
+			logger.Error("failed to load configuration", "error", err)
+			os.Exit(1)
+		}
 	}
 
 	// Establish database connection with proper connection pooling

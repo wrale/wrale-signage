@@ -10,7 +10,7 @@ database:
   port: 5432
   name: wrale_test
   user: postgres
-  password: wrale-dev-password
+  password: postgres
   sslmode: disable
   maxOpenConns: 25
   maxIdleConns: 25
