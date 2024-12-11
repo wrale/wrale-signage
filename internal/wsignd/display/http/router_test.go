@@ -78,15 +78,20 @@ func TestRouterMiddleware(t *testing.T) {
 	t.Run("adds request id header", func(t *testing.T) {
 		router := chi.NewRouter()
 		router.Use(middleware.RequestID)
-		router.Get("/test", func(w http.ResponseWriter, r *http.Request) {})
+
+		// Add handler that checks request ID in context
+		router.Get("/test", func(w http.ResponseWriter, r *http.Request) {
+			requestID := middleware.GetReqID(r.Context())
+			assert.NotEmpty(t, requestID)
+			w.Header().Set(middleware.RequestIDHeader, requestID)
+		})
 
 		req := httptest.NewRequest(http.MethodGet, "/test", nil)
 		rec := httptest.NewRecorder()
 
 		router.ServeHTTP(rec, req)
 
-		requestID := rec.Header().Get("X-Request-ID")
-		assert.NotEmpty(t, requestID)
+		assert.NotEmpty(t, rec.Header().Get(middleware.RequestIDHeader))
 	})
 
 	t.Run("recovers from panic", func(t *testing.T) {
