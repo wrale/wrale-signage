@@ -58,8 +58,8 @@ func (r *repository) SaveEvent(ctx context.Context, event content.Event) error {
 	err := database.RunInTx(ctx, r.db, nil, func(tx *database.Tx) error {
 		// Verify display exists
 		var exists bool
-		err := tx.QueryRowContext(ctx,
-			"SELECT EXISTS(SELECT 1 FROM displays WHERE id = $1)",
+		err := tx.QueryRowContext(ctx, 
+			"SELECT EXISTS(SELECT 1 FROM displays WHERE id = $1)", 
 			event.DisplayID,
 		).Scan(&exists)
 		if err != nil {
@@ -122,15 +122,12 @@ func (r *repository) GetURLMetrics(ctx context.Context, url string, since time.T
 		// Get last seen timestamp
 		var lastSeen sql.NullFloat64
 		err = tx.QueryRowContext(ctx, `
-			SELECT EXTRACT(EPOCH FROM MAX(timestamp))
+			SELECT EXTRACT(EPOCH FROM MAX(timestamp))::bigint
 			FROM content_events 
 			WHERE url = $1
-		`, url).Scan(&lastSeen)
+		`, url).Scan(&metrics.LastSeen)
 		if err != nil && err != sql.ErrNoRows {
 			return err
-		}
-		if lastSeen.Valid {
-			metrics.LastSeen = lastSeen.Float64
 		}
 
 		// Get load and error counts
