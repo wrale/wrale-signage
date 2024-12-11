@@ -123,10 +123,13 @@ Rules are evaluated in priority order until a matching rule is found.`,
 	f.StringSliceVar(&opts.daysOfWeek, "days", nil, "Active days of week (e.g., Mon,Wed,Fri)")
 	f.StringVar(&opts.timeOfDay, "time", "", "Active time range (HH:MM-HH:MM)")
 
-	// Mark required flags
-	cmd.MarkFlagRequired("content-type")
-	cmd.MarkFlagRequired("version")
-	cmd.MarkFlagRequired("hash")
+	// Mark required flags and handle potential errors
+	for _, flagName := range []string{"content-type", "version", "hash"} {
+		if err := cmd.MarkFlagRequired(flagName); err != nil {
+			// This would only happen if we specified a flag name that doesn't exist
+			panic(fmt.Sprintf("failed to mark required flag %q: %v", flagName, err))
+		}
+	}
 
 	return cmd
 }

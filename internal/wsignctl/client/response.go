@@ -8,8 +8,13 @@ import (
 
 // decodeResponse decodes a JSON response into the provided target
 func decodeResponse(resp *http.Response, target interface{}) error {
-	if err := json.NewDecoder(resp.Body).Decode(target); err != nil {
-		return fmt.Errorf("error decoding response: %w", err)
+	if err := handleResponse(resp); err != nil {
+		return err
+	}
+	if target != nil {
+		if err := json.NewDecoder(resp.Body).Decode(target); err != nil {
+			return fmt.Errorf("error decoding response: %w", err)
+		}
 	}
 	return nil
 }

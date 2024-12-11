@@ -11,74 +11,48 @@ import (
 
 // Config holds all configuration for the server
 type Config struct {
-	// Server contains HTTP server configuration
-	Server ServerConfig
-	// Database contains database connection configuration
+	Server   ServerConfig
 	Database DatabaseConfig
-	// Auth contains authentication configuration
-	Auth AuthConfig
-	// Content contains content delivery configuration
-	Content ContentConfig
+	Auth     AuthConfig
+	Content  ContentConfig
 }
 
 // ServerConfig holds HTTP server settings
 type ServerConfig struct {
-	// Host is the server bind address
-	Host string
-	// Port is the server listening port
-	Port int
-	// ReadTimeout is the maximum duration for reading the entire request
-	ReadTimeout time.Duration
-	// WriteTimeout is the maximum duration before timing out writes of the response
+	Host         string
+	Port         int
+	ReadTimeout  time.Duration
 	WriteTimeout time.Duration
-	// IdleTimeout is the maximum duration to wait for the next request
-	IdleTimeout time.Duration
-	// TLSCert is the path to the TLS certificate file
-	TLSCert string
-	// TLSKey is the path to the TLS private key file
-	TLSKey string
+	IdleTimeout  time.Duration
+	TLSCert      string
+	TLSKey       string
 }
 
 // DatabaseConfig holds database connection settings
 type DatabaseConfig struct {
-	// Host is the database server hostname
-	Host string
-	// Port is the database server port
-	Port int
-	// Name is the database name
-	Name string
-	// User is the database user
-	User string
-	// Password is the database password
-	Password string
-	// SSLMode is the PostgreSQL SSL mode
-	SSLMode string
-	// MaxOpenConns is the maximum number of open connections
-	MaxOpenConns int
-	// MaxIdleConns is the maximum number of idle connections
-	MaxIdleConns int
-	// ConnMaxLifetime is the maximum amount of time a connection may be reused
+	Host            string
+	Port            int
+	Name            string
+	User            string
+	Password        string
+	SSLMode         string
+	MaxOpenConns    int
+	MaxIdleConns    int
 	ConnMaxLifetime time.Duration
 }
 
 // AuthConfig holds authentication settings
 type AuthConfig struct {
-	// TokenSigningKey is the key used to sign JWT tokens
-	TokenSigningKey string
-	// TokenExpiry is how long tokens are valid for
-	TokenExpiry time.Duration
-	// DeviceCodeExpiry is how long device activation codes are valid
+	TokenSigningKey  string
+	TokenExpiry      time.Duration
 	DeviceCodeExpiry time.Duration
 }
 
 // ContentConfig holds content delivery settings
 type ContentConfig struct {
-	// StoragePath is where content files are stored
-	StoragePath string
-	// MaxCacheSize is the maximum size of the content cache in bytes
+	StoragePath  string
 	MaxCacheSize int64
-	// DefaultTTL is the default time-to-live for cached content
-	DefaultTTL time.Duration
+	DefaultTTL   time.Duration
 }
 
 // Load creates a new Config from environment variables
@@ -126,19 +100,13 @@ func Load() (*Config, error) {
 	return cfg, cfg.validate()
 }
 
-// Validate checks that the configuration is valid
 func (c *Config) validate() error {
-	// Validate server config
 	if c.Server.Port < 1 || c.Server.Port > 65535 {
 		return fmt.Errorf("invalid server port: %d", c.Server.Port)
 	}
-
-	// If TLS is configured, both cert and key must be provided
 	if (c.Server.TLSCert != "") != (c.Server.TLSKey != "") {
 		return fmt.Errorf("both TLS cert and key must be provided")
 	}
-
-	// Validate database config
 	if c.Database.Port < 1 || c.Database.Port > 65535 {
 		return fmt.Errorf("invalid database port: %d", c.Database.Port)
 	}
@@ -148,24 +116,17 @@ func (c *Config) validate() error {
 	if c.Database.MaxIdleConns < 1 {
 		return fmt.Errorf("invalid max idle connections: %d", c.Database.MaxIdleConns)
 	}
-
-	// Validate auth config
 	if c.Auth.TokenSigningKey == "" {
 		return fmt.Errorf("token signing key is required")
 	}
 	if c.Auth.TokenExpiry < 1*time.Minute {
 		return fmt.Errorf("token expiry must be at least 1 minute")
 	}
-
-	// Validate content config
 	if c.Content.MaxCacheSize < 1024*1024 { // 1MB minimum
 		return fmt.Errorf("cache size must be at least 1MB")
 	}
-
 	return nil
 }
-
-// Helper functions for environment variable parsing
 
 func getEnv(key, fallback string) string {
 	if value, exists := os.LookupEnv(key); exists {
@@ -208,6 +169,8 @@ func getEnvAsDuration(key string, fallback time.Duration) time.Duration {
 	return fallback
 }
 
+// getEnvAsBool parses a boolean environment variable with fallback
+// nolint:unused // Reserved for future use
 func getEnvAsBool(key string, fallback bool) bool {
 	if strValue, exists := os.LookupEnv(key); exists {
 		if value, err := strconv.ParseBool(strValue); err == nil {
@@ -217,6 +180,8 @@ func getEnvAsBool(key string, fallback bool) bool {
 	return fallback
 }
 
+// getEnvAsSlice splits an environment variable into a slice with fallback
+// nolint:unused // Reserved for future use
 func getEnvAsSlice(key string, fallback []string, sep string) []string {
 	if strValue, exists := os.LookupEnv(key); exists {
 		return strings.Split(strValue, sep)
