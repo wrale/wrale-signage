@@ -4,7 +4,7 @@
 
 This demo showcases the core functionality of Wrale Signage:
 - Display registration using human-readable codes
-- Content delivery and sequencing
+- Content delivery and sequencing via distinct content URLs
 - Health monitoring and error recovery
 
 ## Prerequisites
@@ -24,14 +24,14 @@ sleep 5  # Wait for PostgreSQL to start
 ./scripts/init-test-db.sh
 ```
 
-2. Build and start the server:
+2. Build and start the server (API/control plane):
 ```bash
 make build
 WSIGN_AUTH_TOKEN_KEY=dev-secret-key \
   ./bin/wsignd --config configs/dev.yaml
 ```
 
-3. In another terminal, build and start the web interface:
+3. Start the content server (data plane):
 ```bash
 cd web
 npm install
@@ -42,14 +42,12 @@ npm run dev
 
 ### 1. Display Registration (5 minutes)
 
-TODO: Pick one of site-id/zone-id (OR) site/zone. I like the second one better.
-
-1. Open web interface at http://localhost:3000
+1. Open web interface at http://localhost:3000/control
 2. Browser interface loads and displays registration code (e.g., "BLUE-FISH")
 3. In another terminal, use CLI to register display:
 ```bash
 ./bin/wsignctl display activate BLUE-FISH \
-  --site-id headquarters \
+  --site headquarters \
   --zone lobby \
   --position main
 ```
@@ -57,15 +55,15 @@ TODO: Pick one of site-id/zone-id (OR) site/zone. I like the second one better.
 
 ### 2. Content Management (5 minutes)
 
-1. Add test content:
+1. Add test content pointing to vite dev server:
 ```bash
 ./bin/wsignctl content add welcome \
-  --path demo/0001_basic_setup_and_content/content/welcome.html \
+  --url http://localhost:3000/demo/0001/welcome.html \
   --duration 10s \
   --config configs/wsignctl.yaml
 
 ./bin/wsignctl content add news \
-  --path demo/0001_basic_setup_and_content/content/news.html \
+  --url http://localhost:3000/demo/0001/news.html \
   --duration 15s \
   --config configs/wsignctl.yaml
 ```
@@ -74,7 +72,7 @@ TODO: Pick one of site-id/zone-id (OR) site/zone. I like the second one better.
 ```bash
 ./bin/wsignctl rule add \
   --display BLUE-FISH \
-  --content welcome.html,news.html
+  --content welcome,news
 ```
 
 3. Observe content rotation in browser interface
@@ -88,20 +86,21 @@ TODO: Pick one of site-id/zone-id (OR) site/zone. I like the second one better.
 
 2. Check content health metrics:
 ```bash
-./bin/wsignctl content health welcome.html
+./bin/wsignctl content health welcome
 ```
 
 3. Simulate error conditions:
-   - Stop web server serving news.html
-   - Observe automatic fallback to welcome.html
+   - Stop vite dev server
+   - Observe automatic fallback
    - Watch error reporting in logs
+   - Restart vite dev server and observe recovery
 
 ## Key Points to Demonstrate
 
-1. Human-Readable Setup
-   - No complex configuration required
-   - Display setup uses simple codes
-   - CLI provides intuitive management
+1. Separation of Concerns
+   - API server as control plane (8080)
+   - Content served separately (3000)
+   - Clear separation of duties
 
 2. Resilient Operation  
    - Content caching for offline operation
@@ -122,7 +121,7 @@ docker-compose down -v
 
 ## Additional Notes
 
-- Demo uses development configuration
-- Created test content is stored in testdata directory
-- Health metrics persist in database between runs
+- API server runs on port 8080
+- Content served from port 3000 
+- Health metrics persist in database
 - Use --verbose flag with CLI for detailed output
