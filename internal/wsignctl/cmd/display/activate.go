@@ -103,9 +103,15 @@ connected to the displays.{domain} endpoint.`,
 	cmd.Flags().StringArrayVar(&labels, "label", nil, "Additional labels in key=value format")
 	cmd.Flags().StringVarP(&output, "output", "o", "", "Output format (json)")
 
-	cmd.MarkFlagRequired("site-id")
-	cmd.MarkFlagRequired("zone")
-	cmd.MarkFlagRequired("position")
+	// Mark required flags and handle potential errors
+	requiredFlags := []string{"site-id", "zone", "position"}
+	for _, flag := range requiredFlags {
+		if err := cmd.MarkFlagRequired(flag); err != nil {
+			// Since this is during command construction, we should panic
+			// This follows cobra's pattern for command setup errors
+			panic(fmt.Sprintf("failed to mark %q flag as required: %v", flag, err))
+		}
+	}
 
 	return cmd
 }
