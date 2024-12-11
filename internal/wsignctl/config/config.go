@@ -49,30 +49,34 @@ func defaultConfigPath() string {
 	return filepath.Join(home, ".wsignctl/config.yaml")
 }
 
-// LoadConfig loads the configuration from disk
-func LoadConfig() (*Config, error) {
-	configPath := os.Getenv("WSIGNCTL_CONFIG")
-	if configPath == "" {
-		configPath = defaultConfigPath()
-	}
+// LoadConfig loads the configuration, using the provided path or falling back to defaults
+func LoadConfig(configPath string) (*Config, error) {
+	// Initialize viper
+	v := viper.New()
+	v.SetConfigType("yaml")
 
-	// Set up viper with default config
-	viper.SetConfigFile(configPath)
-	viper.SetConfigType("yaml")
-	
-	// Initialize with defaults
-	if err := viper.ReadInConfig(); err != nil {
-		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
-			// Return default config - no error needed since command flags may override
-			return &defaultConfig, nil
+	// Try explicit config path first
+	if configPath != "" {
+		v.SetConfigFile(configPath)
+		if err := v.ReadInConfig(); err != nil {
+			return nil, fmt.Errorf("error reading config from %s: %w", configPath, err)
 		}
-		// Only error on actual read issues
-		return nil, fmt.Errorf("error reading config: %w", err)
+	} else {
+		// Fall back to default paths
+		defaultPath := defaultConfigPath()
+		v.SetConfigFile(defaultPath)
+		if err := v.ReadInConfig(); err != nil {
+			if _, ok := err.(viper.ConfigFileNotFoundError); ok {
+				// No config found anywhere, return defaults
+				return &defaultConfig, nil
+			}
+			return nil, fmt.Errorf("error reading default config: %w", err)
+		}
 	}
 
-	// Parse the config into our struct
+	// Parse config
 	var config Config
-	if err := viper.Unmarshal(&config); err != nil {
+	if err := v.Unmarshal(&config); err != nil {
 		return nil, fmt.Errorf("error parsing config: %w", err)
 	}
 
@@ -80,16 +84,19 @@ func LoadConfig() (*Config, error) {
 }
 
 // SaveConfig writes the configuration to disk
-func SaveConfig(config *Config) error {
-	// Update viper with new config values
-	viper.Set("current-context", config.CurrentContext)
-	viper.Set("contexts", config.Contexts)
+func SaveConfig(config *Config, configPath string) error {
+	v := viper.New()
+	v.SetConfigType("yaml")
 
-	configPath := viper.ConfigFileUsed()
+	// Determine config path
 	if configPath == "" {
 		configPath = defaultConfigPath()
-		viper.SetConfigFile(configPath)
 	}
+	v.SetConfigFile(configPath)
+
+	// Update config values
+	v.Set("current-context", config.CurrentContext)
+	v.Set("contexts", config.Contexts)
 
 	// Ensure directory exists
 	configDir := filepath.Dir(configPath)
@@ -97,16 +104,9 @@ func SaveConfig(config *Config) error {
 		return fmt.Errorf("error creating config directory: %w", err)
 	}
 
-	// Write to disk
-	if err := viper.SafeWriteConfig(); err != nil {
-		// Ignore already exists error
-		if _, ok := err.(viper.ConfigFileAlreadyExistsError); !ok {
-			return fmt.Errorf("error writing config: %w", err)
-		}
-		// File exists, overwrite it
-		if err := viper.WriteConfig(); err != nil {
-			return fmt.Errorf("error writing config: %w", err)
-		}
+	// Write config
+	if err := v.WriteConfig(); err != nil {
+		return fmt.Errorf("error writing config: %w", err)
 	}
 
 	return nil
