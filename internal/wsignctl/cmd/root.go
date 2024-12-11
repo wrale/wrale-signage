@@ -36,6 +36,13 @@ func Execute() {
 	}
 }
 
+// markFlagRequired is a helper that handles the error from MarkFlagRequired
+func markFlagRequired(cmd *cobra.Command, name string) {
+	if err := cmd.MarkFlagRequired(name); err != nil {
+		panic(fmt.Sprintf("Failed to mark flag %q as required: %v", name, err))
+	}
+}
+
 func init() {
 	cobra.OnInitialize(initConfig)
 
@@ -46,10 +53,13 @@ func init() {
 	rootCmd.PersistentFlags().String("context", "", "Configuration context to use")
 
 	// Add commands
-	rootCmd.AddCommand(display.NewCommand())
-	rootCmd.AddCommand(content.NewCommand())
-	rootCmd.AddCommand(rule.NewCommand())
-	rootCmd.AddCommand(newVersionCmd())
+	rootCmd.AddCommand(
+		display.NewCommand(),
+		content.NewCommand(),
+		rule.NewCommand(),
+		newVersionCmd(),
+		newConfigCmd(),
+	)
 }
 
 // initConfig reads in config file and ENV variables if set
