@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/google/uuid"
 	"github.com/wrale/wrale-signage/api/types/v1alpha1"
+	"github.com/wrale/wrale-signage/internal/wsignd/display"
 	"github.com/wrale/wrale-signage/internal/wsignd/display/activation"
 	werrors "github.com/wrale/wrale-signage/internal/wsignd/errors"
 )
