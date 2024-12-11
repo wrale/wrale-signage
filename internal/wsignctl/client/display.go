@@ -70,6 +70,17 @@ func (c *Client) ListDisplays(ctx context.Context, selector v1alpha1.DisplaySele
 	return displays, closeBody(resp.Body, nil)
 }
 
+// CreateDisplay creates a new display with the given name and configuration
+func (c *Client) CreateDisplay(ctx context.Context, name string, display *v1alpha1.Display) error {
+	resp, err := c.doRequest(ctx, http.MethodPost, "/api/v1alpha1/displays", display)
+	if err != nil {
+		return fmt.Errorf("failed to create display: %w", err)
+	}
+	defer resp.Body.Close()
+
+	return closeBody(resp.Body, nil)
+}
+
 // ActivateDisplay activates a display using its registration information
 func (c *Client) ActivateDisplay(ctx context.Context, req *v1alpha1.DisplayRegistrationRequest) (*v1alpha1.Display, error) {
 	// First try to find existing display
