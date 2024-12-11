@@ -38,7 +38,14 @@ func (h *Handler) RegisterDisplay(w http.ResponseWriter, r *http.Request) {
 	)
 
 	// Re-decode for actual processing
-	r.Body.Close()
+	if err := r.Body.Close(); err != nil {
+		h.logger.Error("failed to close request body",
+			"error", err,
+			"requestID", reqID,
+		)
+		h.writeError(w, werrors.NewError("INTERNAL", "internal server error", "RegisterDisplay", err), http.StatusInternalServerError)
+		return
+	}
 	var req v1alpha1.DisplayRegistrationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.logger.Error("failed to decode registration request",
