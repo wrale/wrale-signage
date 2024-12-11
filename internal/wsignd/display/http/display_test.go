@@ -46,15 +46,23 @@ func TestGetDisplay(t *testing.T) {
 			wantStatus: http.StatusOK,
 		},
 		{
-			name:      "invalid uuid",
+			name:      "lookup by name",
 			displayID: "not-a-uuid",
 			mockSetup: func() {
-				// No mock setup needed - should fail before service call
+				mockSvc.On("GetByName", mock.Anything, "not-a-uuid").Return(existingDisplay, nil)
 			},
-			wantStatus: http.StatusBadRequest,
+			wantStatus: http.StatusOK,
 		},
 		{
-			name:      "display not found",
+			name:      "display not found by name",
+			displayID: "unknown-display",
+			mockSetup: func() {
+				mockSvc.On("GetByName", mock.Anything, "unknown-display").Return(nil, display.ErrNotFound{ID: "unknown-display"})
+			},
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name:      "display not found by id",
 			displayID: uuid.New().String(),
 			mockSetup: func() {
 				mockSvc.On("Get", mock.Anything, mock.Anything).Return(nil, display.ErrNotFound{ID: "unknown"})
