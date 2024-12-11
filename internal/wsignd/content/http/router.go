@@ -4,19 +4,22 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-func NewRouter(h *Handler) chi.Router {
-	r := chi.NewRouter()
+func (h *Handler) RegisterRoutes(r chi.Router) {
+	r.Route("/api/v1alpha1/content", func(r chi.Router) {
+		// Content management endpoints
+		r.Post("/", h.handleCreateContent)
+		r.Get("/", h.handleListContent)
+		r.Route("/{name}", func(r chi.Router) {
+			r.Get("/", h.handleGetContent)
+			r.Put("/", h.handleUpdateContent)
+			r.Delete("/", h.handleDeleteContent)
+		})
 
-	// Content management endpoints
-	r.Post("/", h.CreateContent)
-	r.Get("/", h.ListContent)
+		// Content event reporting
+		r.Post("/events", h.handleReportEvents)
 
-	// Content event reporting
-	r.Post("/events", h.ReportEvents)
-
-	// Content monitoring
-	r.Get("/health/{url}", h.GetURLHealth)
-	r.Get("/metrics/{url}", h.GetURLMetrics)
-
-	return r
+		// Content monitoring
+		r.Get("/health/{url}", h.handleGetURLHealth)
+		r.Get("/metrics/{url}", h.handleGetURLMetrics)
+	})
 }
