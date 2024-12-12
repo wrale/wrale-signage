@@ -1,6 +1,6 @@
 import React, { forwardRef, useCallback, useEffect, useRef } from 'react';
 import type { ContentItem, ContentEvent } from '../types';
-import monitorScript from '../contentMonitor';
+import { monitorScript } from '../contentMonitor';
 
 interface ContentFrameProps {
   content: ContentItem;
