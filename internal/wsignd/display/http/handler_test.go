@@ -9,8 +9,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/mock"
+	"github.com/wrale/wrale-signage/internal/wsignd/auth"
 	"github.com/wrale/wrale-signage/internal/wsignd/display"
 	"github.com/wrale/wrale-signage/internal/wsignd/display/activation"
+	"github.com/wrale/wrale-signage/internal/wsignd/ratelimit"
 )
 
 type mockService struct {
@@ -99,12 +101,58 @@ func (m *mockActivationService) ValidateCode(ctx context.Context, code string) (
 	return args.Get(0).(*activation.DeviceCode), args.Error(1)
 }
 
+type mockAuthService struct {
+	mock.Mock
+}
+
+func (m *mockAuthService) CreateToken(ctx context.Context, displayID uuid.UUID) (*auth.Token, error) {
+	args := m.Called(ctx, displayID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*auth.Token), args.Error(1)
+}
+
+func (m *mockAuthService) ValidateAccessToken(ctx context.Context, token string) (uuid.UUID, error) {
+	args := m.Called(ctx, token)
+	return args.Get(0).(uuid.UUID), args.Error(1)
+}
+
+func (m *mockAuthService) RefreshToken(ctx context.Context, refreshToken string) (*auth.Token, error) {
+	args := m.Called(ctx, refreshToken)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*auth.Token), args.Error(1)
+}
+
+type mockRateLimitService struct {
+	mock.Mock
+}
+
+func (m *mockRateLimitService) Allow(ctx context.Context, key ratelimit.LimitKey) error {
+	args := m.Called(ctx, key)
+	return args.Error(0)
+}
+
+func (m *mockRateLimitService) GetLimit(limitType string) ratelimit.Limit {
+	args := m.Called(limitType)
+	return args.Get(0).(ratelimit.Limit)
+}
+
+func (m *mockRateLimitService) Reset(ctx context.Context, key ratelimit.LimitKey) error {
+	args := m.Called(ctx, key)
+	return args.Error(0)
+}
+
 // newTestHandler creates a new handler with mock services for testing
 func newTestHandler() (*Handler, *mockService) {
 	mockSvc := &mockService{}
 	mockActSvc := &mockActivationService{}
+	mockAuthSvc := &mockAuthService{}
+	mockRateLimitSvc := &mockRateLimitService{}
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	return NewHandler(mockSvc, mockActSvc, logger), mockSvc
+	return NewHandler(mockSvc, mockActSvc, mockAuthSvc, mockRateLimitSvc, logger), mockSvc
 }
 
 // mockChiContext adds a chi routing context to the request

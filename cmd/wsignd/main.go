@@ -15,8 +15,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	_ "github.com/lib/pq"
+	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
 
+	"github.com/wrale/wrale-signage/internal/wsignd/auth"
+	authpg "github.com/wrale/wrale-signage/internal/wsignd/auth/postgres"
 	"github.com/wrale/wrale-signage/internal/wsignd/config"
 	"github.com/wrale/wrale-signage/internal/wsignd/content"
 	contenthttp "github.com/wrale/wrale-signage/internal/wsignd/content/http"
@@ -27,6 +30,8 @@ import (
 	displayhttp "github.com/wrale/wrale-signage/internal/wsignd/display/http"
 	displaypg "github.com/wrale/wrale-signage/internal/wsignd/display/postgres"
 	"github.com/wrale/wrale-signage/internal/wsignd/display/service"
+	"github.com/wrale/wrale-signage/internal/wsignd/ratelimit"
+	ratelimitredis "github.com/wrale/wrale-signage/internal/wsignd/ratelimit/redis"
 )
 
 func main() {
@@ -78,10 +83,24 @@ func main() {
 	}
 	defer db.Close()
 
+	// Initialize Redis client
+	redisClient := redis.NewClient(&redis.Options{
+		Addr:     fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port),
+		Password: cfg.Redis.Password,
+		DB:       cfg.Redis.DB,
+	})
+
+	// Test Redis connection
+	if err := redisClient.Ping(context.Background()).Err(); err != nil {
+		logger.Error("failed to connect to Redis", "error", err)
+		os.Exit(1)
+	}
+	defer redisClient.Close()
+
 	// Create HTTP server
 	server := &http.Server{
 		Addr:         fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
-		Handler:      setupRouter(cfg, db, logger, zlogger),
+		Handler:      setupRouter(cfg, db, redisClient, logger, zlogger),
 		ReadTimeout:  cfg.Server.ReadTimeout,
 		WriteTimeout: cfg.Server.WriteTimeout,
 		IdleTimeout:  cfg.Server.IdleTimeout,
@@ -122,8 +141,16 @@ func main() {
 	logger.Info("server stopped")
 }
 
-func setupRouter(cfg *config.Config, db *sql.DB, logger *slog.Logger, zlogger zerolog.Logger) http.Handler {
+func setupRouter(cfg *config.Config, db *sql.DB, redisClient *redis.Client, logger *slog.Logger, zlogger zerolog.Logger) http.Handler {
 	r := chi.NewRouter()
+
+	// Set up rate limiting
+	rateLimitStore := ratelimitredis.NewStore(redisClient)
+	rateLimitService := ratelimit.NewService(rateLimitStore, cfg.RateLimit)
+
+	// Set up auth service
+	authRepo := authpg.NewRepository(db, logger)
+	authService := auth.NewService(authRepo, logger)
 
 	// Set up display service
 	displayRepo := displaypg.NewRepository(db, logger)
@@ -135,7 +162,7 @@ func setupRouter(cfg *config.Config, db *sql.DB, logger *slog.Logger, zlogger ze
 	activationService := activation.NewService(activationRepo)
 
 	// Create display handler
-	displayHandler := displayhttp.NewHandler(displayService, activationService, logger)
+	displayHandler := displayhttp.NewHandler(displayService, activationService, authService, rateLimitService, logger)
 	r.Mount("/", displayHandler.Router())
 
 	// Set up content service

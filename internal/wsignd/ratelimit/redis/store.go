@@ -38,7 +38,7 @@ func (s *Store) Increment(ctx context.Context, key ratelimit.LimitKey, limit rat
 
 	pipe := s.client.Pipeline()
 
-	// Get current value and increment
+	// Get current value
 	getCmd := pipe.Get(ctx, redisKey)
 	pipe.Incr(ctx, redisKey)
 
@@ -109,7 +109,7 @@ func (s *Store) storeKeyInfo(ctx context.Context, key ratelimit.LimitKey) error 
 	}
 
 	infoKey := fmt.Sprintf("rate:info:%s", s.keyStr(key))
-	err = s.client.Set(ctx, infoKey, data, 24*time.Hour).Err()
+	err = s.client.Set(ctx, infoKey, string(data), 24*time.Hour).Err()
 	if err != nil {
 		return fmt.Errorf("%w: %v", ratelimit.ErrStoreError, err)
 	}
@@ -140,7 +140,7 @@ func (s *Store) updateKeyInfo(ctx context.Context, key ratelimit.LimitKey) error
 		return fmt.Errorf("%w: %v", ratelimit.ErrStoreError, err)
 	}
 
-	err = s.client.Set(ctx, infoKey, data, 24*time.Hour).Err()
+	err = s.client.Set(ctx, infoKey, string(data), 24*time.Hour).Err()
 	if err != nil {
 		return fmt.Errorf("%w: %v", ratelimit.ErrStoreError, err)
 	}
