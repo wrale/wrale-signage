@@ -89,9 +89,9 @@ func (m *mockActivationService) GenerateCode(ctx context.Context) (*activation.D
 	return args.Get(0).(*activation.DeviceCode), args.Error(1)
 }
 
-func (m *mockActivationService) ActivateCode(ctx context.Context, code string) (uuid.UUID, error) {
-	args := m.Called(ctx, code)
-	return args.Get(0).(uuid.UUID), args.Error(1)
+func (m *mockActivationService) ActivateCode(ctx context.Context, code string, displayID uuid.UUID) error {
+	args := m.Called(ctx, code, displayID)
+	return args.Error(0)
 }
 
 func (m *mockActivationService) ValidateCode(ctx context.Context, code string) (*activation.DeviceCode, error) {
