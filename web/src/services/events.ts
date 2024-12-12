@@ -1,4 +1,5 @@
 import type { ContentEvent, ContentError, ControlMessage } from '../types';
+import { HealthEventBuffer } from './healthBuffer';
 
 type EventHandler<T> = (event: T) => void;
 
@@ -19,13 +20,16 @@ export class DisplayEventManager {
   private handlers: {
     [K in keyof EventMap]?: Set<EventHandler<EventMap[K]>>;
   } = {};
+
+  private healthBuffer: HealthEventBuffer;
   
-  private healthEventBuffer: ContentEvent[] = [];
-  private readonly maxBufferSize = 50;
-  private flushTimeout?: number;
-  
-  constructor(private readonly flushInterval = 5000) {
-    this.startFlushTimer();
+  constructor() {
+    this.healthBuffer = new HealthEventBuffer(events => this.emitHealthEvents(events), {
+      maxSize: 50,            // Max 50 events before force flush
+      flushInterval: 5000,    // Regular flush every 5s
+      maxErrorAge: 30000,     // Keep errors for 30s
+      offlineTimeout: 30000   // Wait 30s between retries in offline mode
+    });
   }
 
   on<K extends keyof EventMap>(event: K, handler: EventHandler<EventMap[K]>) {
@@ -50,29 +54,25 @@ export class DisplayEventManager {
   }
 
   /**
-   * Buffer health events for batch processing
+   * Handle content health event
    */
   bufferHealthEvent(event: ContentEvent) {
-    this.healthEventBuffer.push(event);
-    
-    // Flush if buffer is full
-    if (this.healthEventBuffer.length >= this.maxBufferSize) {
-      this.flushHealthEvents();
+    // Special handling for errors
+    if (event.error) {
+      this.emit('error', event.error);
     }
+    
+    // Add to health buffer
+    this.healthBuffer.addEvent(event);
   }
 
   /**
-   * Flush buffered health events
+   * Emit batch of health events to handlers
    */
-  private flushHealthEvents() {
-    if (this.healthEventBuffer.length === 0) return;
-
-    const events = this.healthEventBuffer;
-    this.healthEventBuffer = [];
-
+  private emitHealthEvents(events: ContentEvent[]) {
     this.handlers.health?.forEach(handler => {
       try {
-        // Send events batch
+        // Send each event in batch to handler
         events.forEach(event => handler(event));
       } catch (err) {
         console.error('Error processing health events:', err);
@@ -80,18 +80,8 @@ export class DisplayEventManager {
     });
   }
 
-  private startFlushTimer() {
-    this.flushTimeout = window.setInterval(
-      () => this.flushHealthEvents(),
-      this.flushInterval
-    );
-  }
-
   dispose() {
-    if (this.flushTimeout) {
-      window.clearInterval(this.flushTimeout);
-    }
+    this.healthBuffer.dispose();
     this.handlers = {};
-    this.healthEventBuffer = [];
   }
 }
