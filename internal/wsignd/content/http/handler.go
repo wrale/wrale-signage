@@ -22,32 +22,30 @@ func NewHandler(service content.Service, logger zerolog.Logger) *Handler {
 	}
 }
 
-// Router returns a router pre-configured with all content endpoints
+// Router returns a router pre-configured with all content endpoints mounted at the API root
 func (h *Handler) Router() chi.Router {
 	r := chi.NewRouter()
 	h.RegisterRoutes(r)
 	return r
 }
 
-// RegisterRoutes configures the content endpoints on the provided router
+// RegisterRoutes mounts all API endpoints on the provided router
 func (h *Handler) RegisterRoutes(r chi.Router) {
-	r.Route("/", func(r chi.Router) {
-		// Content management endpoints
-		r.Post("/", h.handleCreateContent)
-		r.Get("/", h.handleListContent)
-		r.Route("/{name}", func(r chi.Router) {
-			r.Get("/", h.handleGetContent)
-			r.Put("/", h.handleUpdateContent)
-			r.Delete("/", h.handleDeleteContent)
-		})
-
-		// Content event reporting
-		r.Post("/events", h.handleReportEvents)
-
-		// Content monitoring
-		r.Get("/health/{url}", h.handleGetURLHealth)
-		r.Get("/metrics/{url}", h.handleGetURLMetrics)
+	// Content management endpoints
+	r.Post("/", h.handleCreateContent)
+	r.Get("/", h.handleListContent)
+	r.Route("/{name}", func(r chi.Router) {
+		r.Get("/", h.handleGetContent)
+		r.Put("/", h.handleUpdateContent)
+		r.Delete("/", h.handleDeleteContent)
 	})
+
+	// Content event reporting
+	r.Post("/events", h.handleReportEvents)
+
+	// Content monitoring
+	r.Get("/health/{url}", h.handleGetURLHealth)
+	r.Get("/metrics/{url}", h.handleGetURLMetrics)
 }
 
 func (h *Handler) decodeContentSource(r *http.Request) (*v1alpha1.ContentSource, error) {
