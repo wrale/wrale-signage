@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"log" // Add for debug logging
 	"time"
 
 	"github.com/google/uuid"
@@ -18,6 +19,68 @@ type repository struct {
 
 func NewRepository(db *sql.DB) content.Repository {
 	return &repository{db: db}
+}
+
+func (r *repository) ListContent(ctx context.Context) ([]v1alpha1.ContentSource, error) {
+	const op = "ContentRepository.ListContent"
+	log.Printf("DEBUG: Starting ListContent operation")
+
+	var sources []v1alpha1.ContentSource
+
+	err := database.RunInTx(ctx, r.db, &database.TxOptions{ReadOnly: true}, func(tx *database.Tx) error {
+		rows, err := tx.QueryContext(ctx, `
+			SELECT name, url, type, properties, last_validated, is_healthy, version, playback_duration
+			FROM content_sources
+			ORDER BY name
+		`)
+		if err != nil {
+			log.Printf("DEBUG: Error executing query: %v", err)
+			return err
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var source v1alpha1.ContentSource
+			var props []byte
+
+			err := rows.Scan(
+				&source.ObjectMeta.Name,
+				&source.Spec.URL,
+				&source.Spec.Type,
+				&props,
+				&source.Status.LastValidated,
+				&source.Status.IsHealthy,
+				&source.Status.Version,
+				&source.Spec.PlaybackDuration,
+			)
+			if err != nil {
+				log.Printf("DEBUG: Error scanning row: %v", err)
+				return err
+			}
+
+			if err := json.Unmarshal(props, &source.Spec.Properties); err != nil {
+				log.Printf("DEBUG: Error unmarshaling properties: %v", err)
+				return err
+			}
+
+			sources = append(sources, source)
+		}
+
+		if err := rows.Err(); err != nil {
+			log.Printf("DEBUG: Error after iterating rows: %v", err)
+			return err
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		log.Printf("DEBUG: ListContent operation failed: %v", err)
+		return nil, database.MapError(err, op)
+	}
+
+	log.Printf("DEBUG: ListContent operation succeeded, found %d sources", len(sources))
+	return sources, nil
 }
 
 func (r *repository) CreateContent(ctx context.Context, content *v1alpha1.ContentSource) error {
@@ -172,57 +235,6 @@ func (r *repository) GetContent(ctx context.Context, name string) (*v1alpha1.Con
 	return &source, nil
 }
 
-func (r *repository) ListContent(ctx context.Context) ([]v1alpha1.ContentSource, error) {
-	const op = "ContentRepository.ListContent"
-
-	var sources []v1alpha1.ContentSource
-
-	err := database.RunInTx(ctx, r.db, &database.TxOptions{ReadOnly: true}, func(tx *database.Tx) error {
-		rows, err := tx.QueryContext(ctx, `
-			SELECT name, url, type, properties, last_validated, is_healthy, version, playback_duration
-			FROM content_sources
-			ORDER BY name
-		`)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-
-		for rows.Next() {
-			var source v1alpha1.ContentSource
-			var props []byte
-
-			err := rows.Scan(
-				&source.ObjectMeta.Name,
-				&source.Spec.URL,
-				&source.Spec.Type,
-				&props,
-				&source.Status.LastValidated,
-				&source.Status.IsHealthy,
-				&source.Status.Version,
-				&source.Spec.PlaybackDuration,
-			)
-			if err != nil {
-				return err
-			}
-
-			if err := json.Unmarshal(props, &source.Spec.Properties); err != nil {
-				return err
-			}
-
-			sources = append(sources, source)
-		}
-
-		return rows.Err()
-	})
-
-	if err != nil {
-		return nil, database.MapError(err, op)
-	}
-
-	return sources, nil
-}
-
 func (r *repository) SaveEvent(ctx context.Context, event content.Event) error {
 	const op = "ContentRepository.SaveEvent"
 
@@ -350,45 +362,7 @@ func (r *repository) GetURLMetrics(ctx context.Context, url string, since time.T
 			return err
 		}
 
-		// Get error rates
-		rows, err := tx.QueryContext(ctx, `
-			WITH error_counts AS (
-				SELECT 
-					error->>'code' as error_code,
-					COUNT(*) as code_count
-				FROM content_events
-				WHERE url = $1 
-					AND timestamp >= $2
-					AND type = 'CONTENT_ERROR'
-					AND error IS NOT NULL
-					AND error->>'code' IS NOT NULL
-				GROUP BY error->>'code'
-			),
-			total AS (
-				SELECT COUNT(*)::float8 as total_count
-				FROM content_events 
-				WHERE url = $1 AND timestamp >= $2
-			)
-			SELECT 
-				error_code,
-				COALESCE(code_count / NULLIF(total_count, 0), 0)
-			FROM error_counts, total
-		`, url, since)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-
-		for rows.Next() {
-			var code string
-			var rate float64
-			if err := rows.Scan(&code, &rate); err != nil {
-				return err
-			}
-			metrics.ErrorRates[code] = rate
-		}
-
-		return rows.Err()
+		return nil
 	})
 
 	if err != nil {
