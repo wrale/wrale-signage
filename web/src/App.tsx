@@ -9,6 +9,7 @@ function App() {
   const apiBase = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/api/v1alpha1`;
   
   const [registrationCode, setRegistrationCode] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   // Initial display configuration
   const config: DisplayConfig = {
@@ -33,9 +34,8 @@ function App() {
 
     const checkRegistration = async () => {
       try {
-        // Check if we have a valid token
-        const token = await registration.getAccessToken();
-        if (token) {
+        // Check if already registered
+        if (await registration.isValidRegistration()) {
           setRegistrationCode(null);
           return;
         }
@@ -43,13 +43,41 @@ function App() {
         // Start registration flow
         const response = await registration.startRegistration();
         setRegistrationCode(response.userCode);
+
+        // Start polling for activation
+        await registration.pollForActivation(
+          response.deviceCode, 
+          response.pollInterval
+        );
+
+        // Activation succeeded
+        setRegistrationCode(null);
       } catch (err) {
         console.error('Registration error:', err);
+        setError(err instanceof Error ? err.message : 'Registration failed');
       }
     };
 
     checkRegistration();
+
+    return () => registration.dispose();
   }, [config]);
+
+  // Show error if registration failed
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center h-screen text-white bg-black">
+        <h1 className="text-2xl mb-4">Registration Error</h1>
+        <p className="text-red-500">{error}</p>
+        <button 
+          className="mt-4 px-4 py-2 bg-blue-500 rounded hover:bg-blue-600"
+          onClick={() => window.location.reload()}
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="h-screen w-screen bg-black overflow-hidden">
