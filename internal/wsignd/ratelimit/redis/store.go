@@ -2,7 +2,6 @@ package redis
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"time"
@@ -86,64 +85,4 @@ func (s *Store) IsExceeded(ctx context.Context, key ratelimit.LimitKey, limit ra
 
 	count, _ := strconv.Atoi(val)
 	return count > limit.Rate+limit.BurstSize, nil
-}
-
-// keyInfo is stored with metadata about the rate limit
-type keyInfo struct {
-	Type     string    `json:"type"`
-	Created  time.Time `json:"created"`
-	LastSeen time.Time `json:"last_seen"`
-}
-
-// storeKeyInfo stores metadata about a rate limit key
-func (s *Store) storeKeyInfo(ctx context.Context, key ratelimit.LimitKey) error {
-	info := keyInfo{
-		Type:     key.Type,
-		Created:  time.Now(),
-		LastSeen: time.Now(),
-	}
-
-	b, err := json.Marshal(info)
-	if err != nil {
-		return fmt.Errorf("%w: %v", ratelimit.ErrStoreError, err)
-	}
-
-	infoKey := fmt.Sprintf("rate:info:%s", s.keyStr(key))
-	err = s.client.Set(ctx, infoKey, string(b), 24*time.Hour).Err()
-	if err != nil {
-		return fmt.Errorf("%w: %v", ratelimit.ErrStoreError, err)
-	}
-
-	return nil
-}
-
-// updateKeyInfo updates the last seen time for a key
-func (s *Store) updateKeyInfo(ctx context.Context, key ratelimit.LimitKey) error {
-	infoKey := fmt.Sprintf("rate:info:%s", s.keyStr(key))
-
-	var info keyInfo
-	data, err := s.client.Get(ctx, infoKey).Result()
-	if err == redis.Nil {
-		return s.storeKeyInfo(ctx, key)
-	}
-	if err != nil {
-		return fmt.Errorf("%w: %v", ratelimit.ErrStoreError, err)
-	}
-
-	if err := json.Unmarshal([]byte(data), &info); err != nil {
-		return fmt.Errorf("%w: %v", ratelimit.ErrStoreError, err)
-	}
-
-	info.LastSeen = time.Now()
-	b, err := json.Marshal(info)
-	if err != nil {
-		return fmt.Errorf("%w: %v", ratelimit.ErrStoreError, err)
-	}
-
-	err = s.client.Set(ctx, infoKey, string(b), 24*time.Hour).Err()
-	if err != nil {
-		return fmt.Errorf("%w: %v", ratelimit.ErrStoreError, err)
-	}
-
-	return nil
 }

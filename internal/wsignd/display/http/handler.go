@@ -3,11 +3,11 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"log/slog"
 
 	"github.com/wrale/wrale-signage/internal/wsignd/auth"
 	"github.com/wrale/wrale-signage/internal/wsignd/display"
@@ -99,13 +99,23 @@ func (h *Handler) Router() *chi.Mux {
 	return r
 }
 
+// writeJSON writes a JSON response, handling encoding errors
+func writeJSON(w http.ResponseWriter, status int, v interface{}, logger *slog.Logger) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		logger.Error("failed to encode JSON response",
+			"error", err,
+		)
+		// Don't try to write the error since we already wrote headers
+	}
+}
+
 // healthCheck implements a basic health check
 func (h *Handler) healthCheck(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{
+	writeJSON(w, http.StatusOK, map[string]string{
 		"status": "ok",
-	})
+	}, h.logger)
 }
 
 // readyCheck implements a readiness check
@@ -116,7 +126,5 @@ func (h *Handler) readyCheck(w http.ResponseWriter, r *http.Request) {
 		"status": "ok",
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(result)
+	writeJSON(w, status, result, h.logger)
 }
