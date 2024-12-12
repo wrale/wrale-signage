@@ -47,7 +47,7 @@ func (h *Handler) Router() *chi.Mux {
 	r.Use(middleware.RequestID)
 	r.Use(requestIDHeaderMiddleware)
 	r.Use(middleware.RealIP)
-	r.Use(middleware.Recoverer)
+	r.Use(recoverMiddleware(h.logger)) // Replace default recoverer with JSON version
 	r.Use(logMiddleware(h.logger))
 
 	// Create rate limit middleware groups
