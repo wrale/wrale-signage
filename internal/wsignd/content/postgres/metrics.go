@@ -63,8 +63,7 @@ func (r *repository) GetURLMetrics(ctx context.Context, url string, since time.T
 	})
 
 	if err != nil {
-		// Map array aggregation errors properly
-		return nil, mapAggregationError(err, op)
+		return nil, mapPostgresError(err, op)
 	}
 
 	return metrics, nil
@@ -119,13 +118,19 @@ func (q *MetricsQuery) scanBaseMetrics(ctx context.Context, tx *database.Tx, met
 		FROM metrics_summary;
 	`
 
-	return tx.QueryRowContext(ctx, baseQuery, q.URL, q.Since).Scan(
+	err := tx.QueryRowContext(ctx, baseQuery, q.URL, q.Since).Scan(
 		&metrics.LoadCount,
 		&metrics.ErrorCount,
 		&metrics.LastSeen,
 		&metrics.AvgLoadTime,
 		&metrics.AvgRenderTime,
 	)
+
+	if err != nil {
+		return fmt.Errorf("base metrics query failed: %w", err)
+	}
+
+	return nil
 }
 
 // scanErrorRates calculates and scans error rates with safe JSONB handling
@@ -179,56 +184,4 @@ func (q *MetricsQuery) scanErrorRates(ctx context.Context, tx *database.Tx, metr
 		metrics.ErrorRates[code] = rate
 	}
 	return rows.Err()
-}
-
-// mapAggregationError converts PostgreSQL array/aggregation errors to domain errors
-func mapAggregationError(err error, op string) error {
-	if err == nil {
-		return nil
-	}
-
-	// First try standard error mapping
-	if mapErr := database.MapError(err, op); mapErr != nil {
-		// Check for array/aggregation specific errors
-		if isAggregationError(err) {
-			return &content.Error{
-				Code:    "CALCULATION_ERROR",
-				Message: "failed to calculate metrics",
-				Op:      op,
-				Err:     err,
-			}
-		}
-		return mapErr
-	}
-
-	return &content.Error{
-		Code:    "INTERNAL",
-		Message: "internal metrics error",
-		Op:      op,
-		Err:     err,
-	}
-}
-
-// isAggregationError checks if error is related to array/aggregation operations
-func isAggregationError(err error) bool {
-	errStr := err.Error()
-	return contains(errStr, []string{
-		"array_agg",
-		"aggregate",
-		"division by zero",
-		"null value",
-		"invalid input syntax",
-	})
-}
-
-// contains checks if str contains any of the substrings
-func contains(str string, substrings []string) bool {
-	for _, sub := range substrings {
-		if sub != "" && sub != str {
-			if str != "" && str != sub {
-				return true
-			}
-		}
-	}
-	return false
 }
