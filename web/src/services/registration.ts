@@ -1,5 +1,6 @@
 import type { DisplayConfig } from '../types';
 import { ENDPOINTS } from '../constants';
+import { AuthService, AuthTokens } from './auth';
 
 export interface RegistrationResponse {
   deviceCode: string;
@@ -9,37 +10,31 @@ export interface RegistrationResponse {
   verificationUri: string;
 }
 
-export interface TokenResponse {
-  accessToken: string;
-  refreshToken: string;
-  expiresIn: number;
-  refreshExpiresIn: number;
-  tokenType: string;
-  displayId: string;
+export interface RegistrationResult {
+  display: {
+    id: string;
+    name: string;
+    [key: string]: unknown;
+  };
+  auth: AuthTokens;
 }
 
 /**
- * Handles display registration and authentication
+ * Handles display registration flow including device activation and initial authentication.
+ * Uses AuthService for token management after successful registration.
  */
 export class RegistrationService {
-  private tokens: TokenResponse | null = null;
-  private refreshTimer?: number;
+  private readonly auth: AuthService;
+  private readonly tokenChangedUnsubscribe: (() => void) | null = null;
 
   constructor(
     private readonly config: DisplayConfig,
-    private readonly onTokensChanged?: (tokens: TokenResponse | null) => void
+    private readonly onTokensChanged?: (tokens: AuthTokens | null) => void
   ) {
-    // Try to restore tokens from storage
-    const stored = localStorage.getItem(`display-tokens-${config.displayId}`);
-    if (stored) {
-      try {
-        this.tokens = JSON.parse(stored);
-        this.onTokensChanged?.(this.tokens);
-        this.scheduleRefresh();
-      } catch (err) {
-        console.error('Failed to restore tokens:', err);
-        localStorage.removeItem(`display-tokens-${config.displayId}`);
-      }
+    this.auth = new AuthService(config.displayId);
+
+    if (onTokensChanged) {
+      this.tokenChangedUnsubscribe = this.auth.onTokensChanged(onTokensChanged);
     }
   }
 
@@ -89,12 +84,13 @@ export class RegistrationService {
       throw new Error('Activation failed');
     }
 
-    const result = await response.json();
+    const result: RegistrationResult = await response.json();
 
-    // Store display ID from activation response
-    if (result.display?.id) {
-      localStorage.setItem(`display-id-${this.config.displayId}`, result.display.id);
-    }
+    // Store registered display ID
+    localStorage.setItem(`display-id-${this.config.displayId}`, result.display.id);
+
+    // Store auth tokens
+    await this.auth.setTokens(result.auth);
   }
 
   /**
@@ -125,37 +121,20 @@ export class RegistrationService {
    * Get current access token
    */
   getAccessToken(): string | null {
-    return this.tokens?.accessToken ?? null;
+    return this.auth.getAccessToken();
   }
 
-  private clearTokens(): void {
-    this.tokens = null;
-    this.onTokensChanged?.(null);
-
-    localStorage.removeItem(`display-tokens-${this.config.displayId}`);
-    if (this.refreshTimer) {
-      window.clearTimeout(this.refreshTimer);
-    }
-  }
-
-  private scheduleRefresh(): void {
-    // For now just clear tokens after expiry
-    // Token refresh will be implemented in the next phase
-    if (!this.tokens?.expiresIn) return;
-
-    if (this.refreshTimer) {
-      window.clearTimeout(this.refreshTimer);
-    }
-
-    this.refreshTimer = window.setTimeout(
-      () => this.clearTokens(),
-      this.tokens.expiresIn * 1000
-    );
+  /**
+   * Create fetch interceptor for auth headers
+   */
+  createFetchInterceptor(): (url: string, init?: RequestInit) => Promise<Response> {
+    return this.auth.createFetchInterceptor();
   }
 
   dispose(): void {
-    if (this.refreshTimer) {
-      window.clearTimeout(this.refreshTimer);
+    if (this.tokenChangedUnsubscribe) {
+      this.tokenChangedUnsubscribe();
     }
+    this.auth.dispose();
   }
 }
