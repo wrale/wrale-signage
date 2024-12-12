@@ -7,10 +7,11 @@ import (
 
 // Config holds all configuration for the server
 type Config struct {
-	Server   ServerConfig   `yaml:"server"`
-	Database DatabaseConfig `yaml:"database"`
-	Auth     AuthConfig     `yaml:"auth"`
-	Content  ContentConfig  `yaml:"content"`
+	Server    ServerConfig    `yaml:"server"`
+	Database  DatabaseConfig  `yaml:"database"`
+	Auth      AuthConfig      `yaml:"auth"`
+	Content   ContentConfig   `yaml:"content"`
+	RateLimit RateLimitConfig `yaml:"rateLimit"`
 }
 
 // ServerConfig holds HTTP server settings
@@ -49,6 +50,51 @@ type ContentConfig struct {
 	StoragePath  string        `yaml:"storagePath"`
 	MaxCacheSize int64         `yaml:"maxCacheSize"`
 	DefaultTTL   time.Duration `yaml:"defaultTTL"`
+}
+
+// RateLimitConfig holds rate limiting settings
+type RateLimitConfig struct {
+	// Redis configuration for rate limit storage
+	Redis struct {
+		Host     string `yaml:"host"`
+		Port     int    `yaml:"port"`
+		Database int    `yaml:"database"`
+		Password string `yaml:"password"`
+	} `yaml:"redis"`
+
+	// API rate limits
+	API struct {
+		// General rate limits
+		RequestsPerMinute int `yaml:"requestsPerMinute"`
+		BurstSize         int `yaml:"burstSize"`
+
+		// Token refresh limits
+		TokenRefreshPerHour int `yaml:"tokenRefreshPerHour"`
+		RefreshBurstSize    int `yaml:"refreshBurstSize"`
+
+		// Device code limits
+		DeviceCodePerInterval int           `yaml:"deviceCodePerInterval"`
+		DeviceCodeInterval    time.Duration `yaml:"deviceCodeInterval"`
+	} `yaml:"api"`
+
+	// WebSocket rate limits
+	WebSocket struct {
+		MessagesPerMinute int  `yaml:"messagesPerMinute"`
+		BurstSize         int  `yaml:"burstSize"`
+		EnableWaiting     bool `yaml:"enableWaiting"`
+	} `yaml:"websocket"`
+
+	// General settings
+	Settings struct {
+		// Whether to wait on rate limits or fail fast
+		EnableWaiting bool `yaml:"enableWaiting"`
+
+		// How long to wait before giving up
+		MaxWaitTime time.Duration `yaml:"maxWaitTime"`
+
+		// Whether to use client IP for unauthenticated requests
+		UseClientIP bool `yaml:"useClientIP"`
+	} `yaml:"settings"`
 }
 
 // overlayEnv overlays environment variables on top of file-based config
@@ -125,5 +171,43 @@ func (c *Config) overlayEnv() {
 	}
 	if ttl := getEnvAsDuration("WSIGN_CONTENT_TTL", 0); ttl != 0 {
 		c.Content.DefaultTTL = ttl
+	}
+
+	// Rate Limit config
+	if host := getEnv("WSIGN_RATELIMIT_REDIS_HOST", ""); host != "" {
+		c.RateLimit.Redis.Host = host
+	}
+	if port := getEnvAsInt("WSIGN_RATELIMIT_REDIS_PORT", 0); port != 0 {
+		c.RateLimit.Redis.Port = port
+	}
+	if db := getEnvAsInt("WSIGN_RATELIMIT_REDIS_DB", 0); db != 0 {
+		c.RateLimit.Redis.Database = db
+	}
+	if pass := getEnv("WSIGN_RATELIMIT_REDIS_PASSWORD", ""); pass != "" {
+		c.RateLimit.Redis.Password = pass
+	}
+
+	// API rate limits
+	if rpm := getEnvAsInt("WSIGN_RATELIMIT_API_RPM", 0); rpm != 0 {
+		c.RateLimit.API.RequestsPerMinute = rpm
+	}
+	if burst := getEnvAsInt("WSIGN_RATELIMIT_API_BURST", 0); burst != 0 {
+		c.RateLimit.API.BurstSize = burst
+	}
+	if refPerHour := getEnvAsInt("WSIGN_RATELIMIT_REFRESH_HOUR", 0); refPerHour != 0 {
+		c.RateLimit.API.TokenRefreshPerHour = refPerHour
+	}
+
+	// WebSocket rate limits
+	if mpm := getEnvAsInt("WSIGN_RATELIMIT_WS_MPM", 0); mpm != 0 {
+		c.RateLimit.WebSocket.MessagesPerMinute = mpm
+	}
+	if burst := getEnvAsInt("WSIGN_RATELIMIT_WS_BURST", 0); burst != 0 {
+		c.RateLimit.WebSocket.BurstSize = burst
+	}
+
+	// Settings
+	if maxWait := getEnvAsDuration("WSIGN_RATELIMIT_MAX_WAIT", 0); maxWait != 0 {
+		c.RateLimit.Settings.MaxWaitTime = maxWait
 	}
 }

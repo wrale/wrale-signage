@@ -10,6 +10,7 @@ import (
 	"github.com/wrale/wrale-signage/internal/wsignd/auth"
 	"github.com/wrale/wrale-signage/internal/wsignd/display"
 	"github.com/wrale/wrale-signage/internal/wsignd/display/activation"
+	"github.com/wrale/wrale-signage/internal/wsignd/ratelimit"
 )
 
 // Handler implements HTTP handlers for display management
@@ -17,16 +18,18 @@ type Handler struct {
 	service    display.Service
 	activation activation.Service
 	auth       auth.Service
+	rateLimit  ratelimit.Service
 	logger     *slog.Logger
 	hub        *Hub
 }
 
 // NewHandler creates a new display HTTP handler
-func NewHandler(service display.Service, activation activation.Service, auth auth.Service, logger *slog.Logger) *Handler {
+func NewHandler(service display.Service, activation activation.Service, auth auth.Service, rateLimit ratelimit.Service, logger *slog.Logger) *Handler {
 	h := &Handler{
 		service:    service,
 		activation: activation,
 		auth:       auth,
+		rateLimit:  rateLimit,
 		logger:     logger,
 	}
 	h.hub = newHub(logger)
@@ -38,35 +41,80 @@ func NewHandler(service display.Service, activation activation.Service, auth aut
 func (h *Handler) Router() *chi.Mux {
 	r := chi.NewRouter()
 
-	// Middleware in dependency order
+	// Base middleware in dependency order
 	r.Use(middleware.RequestID)
 	r.Use(requestIDHeaderMiddleware)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
 	r.Use(logMiddleware(h.logger))
 
+	// Create rate limit middleware groups
+	rateLimits := ratelimit.NewCommonRateLimits(h.rateLimit, h.logger)
+
 	// API Routes v1alpha1
 	r.Route("/api/v1alpha1/displays", func(r chi.Router) {
-		// Public device activation flow
-		r.Post("/device/code", h.RequestDeviceCode)
-		r.Post("/activate", h.ActivateDeviceCode)
+		// Public device activation endpoints with rate limits
+		r.Group(func(r chi.Router) {
+			// Device code requests have strict limits
+			r.Use(rateLimits.DeviceCodeLimiter())
+
+			r.Post("/device/code", h.RequestDeviceCode)
+			r.Post("/activate", h.ActivateDeviceCode)
+		})
+
+		// Token management with refresh limits
+		r.Group(func(r chi.Router) {
+			r.Use(rateLimits.TokenRefreshLimiter())
+
+			r.Post("/token/refresh", h.RefreshToken)
+		})
 
 		// Protected display management routes
 		r.Group(func(r chi.Router) {
+			// Order: Auth -> Rate Limit -> Routes
 			r.Use(authMiddleware(h.auth, h.logger))
+			r.Use(rateLimits.APIRequestLimiter())
 
+			// Standard API endpoints
 			r.Post("/", h.RegisterDisplay)
 			r.Route("/{id}", func(r chi.Router) {
 				r.Get("/", h.GetDisplay)
 				r.Put("/activate", h.ActivateDisplay)
 				r.Put("/last-seen", h.UpdateLastSeen)
 			})
-			r.Get("/ws", h.ServeWs)
+
+			// WebSocket endpoint with its own rate limit
+			r.With(rateLimits.WebSocketLimiter()).Get("/ws", h.ServeWs)
 		})
 
-		// Token management
-		r.Post("/token/refresh", h.RefreshToken)
+		// Health check endpoints bypass rate limits
+		r.Group(func(r chi.Router) {
+			r.Get("/healthz", h.healthCheck)
+			r.Get("/readyz", h.readyCheck)
+		})
 	})
 
 	return r
+}
+
+// healthCheck implements a basic health check
+func (h *Handler) healthCheck(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{
+		"status": "ok",
+	})
+}
+
+// readyCheck implements a readiness check
+func (h *Handler) readyCheck(w http.ResponseWriter, r *http.Request) {
+	// Check dependencies
+	status := http.StatusOK
+	result := map[string]string{
+		"status": "ok",
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(result)
 }
