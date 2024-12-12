@@ -1,40 +1,40 @@
 package postgres
 
 import (
-	\"context\"
-	\"database/sql\"
-	\"encoding/json\"
-	\"time\"
+	"context"
+	"database/sql"
+	"encoding/json"
+	"time"
 
-	\"github.com/google/uuid\"
-	\"github.com/wrale/wrale-signage/internal/wsignd/content\"
-	\"github.com/wrale/wrale-signage/internal/wsignd/database\"
+	"github.com/google/uuid"
+	"github.com/wrale/wrale-signage/internal/wsignd/content"
+	"github.com/wrale/wrale-signage/internal/wsignd/database"
 )
 
 // SaveEvent implements content.Repository.SaveEvent
 func (r *repository) SaveEvent(ctx context.Context, event content.Event) error {
-	const op = \"ContentRepository.SaveEvent\"
+	const op = "ContentRepository.SaveEvent"
 
 	var metrics map[string]interface{}
 	if event.Metrics != nil {
 		metrics = map[string]interface{}{
-			\"loadTime\":        event.Metrics.LoadTime,
-			\"renderTime\":      event.Metrics.RenderTime,
-			\"interactiveTime\": event.Metrics.InteractiveTime,
+			"loadTime":        event.Metrics.LoadTime,
+			"renderTime":      event.Metrics.RenderTime,
+			"interactiveTime": event.Metrics.InteractiveTime,
 		}
 		if event.Metrics.ResourceStats != nil {
-			metrics[\"resourceStats\"] = event.Metrics.ResourceStats
+			metrics["resourceStats"] = event.Metrics.ResourceStats
 		}
 	}
 
 	var errorData map[string]interface{}
 	if event.Error != nil {
 		errorData = map[string]interface{}{
-			\"code\":    event.Error.Code,
-			\"message\": event.Error.Message,
+			"code":    event.Error.Code,
+			"message": event.Error.Message,
 		}
 		if event.Error.Details != nil {
-			errorData[\"details\"] = event.Error.Details
+			errorData["details"] = event.Error.Details
 		}
 	}
 
@@ -57,7 +57,7 @@ func (r *repository) SaveEvent(ctx context.Context, event content.Event) error {
 		// Verify display exists
 		var exists bool
 		err := tx.QueryRowContext(ctx,
-			\"SELECT EXISTS(SELECT 1 FROM displays WHERE id = $1)\",
+			"SELECT EXISTS(SELECT 1 FROM displays WHERE id = $1)",
 			event.DisplayID,
 		).Scan(&exists)
 		if err != nil {
@@ -94,7 +94,7 @@ func (r *repository) SaveEvent(ctx context.Context, event content.Event) error {
 
 // GetDisplayEvents implements content.Repository.GetDisplayEvents
 func (r *repository) GetDisplayEvents(ctx context.Context, displayID uuid.UUID, since time.Time) ([]content.Event, error) {
-	const op = \"ContentRepository.GetDisplayEvents\"
+	const op = "ContentRepository.GetDisplayEvents"
 
 	var events []content.Event
 
@@ -130,14 +130,35 @@ func (r *repository) GetDisplayEvents(ctx context.Context, displayID uuid.UUID, 
 				return err
 			}
 
-			if len(errorJSON) > 0 && string(errorJSON) != \"null\" {
+			if len(errorJSON) > 0 && string(errorJSON) != "null" {
 				event.Error = &content.EventError{}
 				if err := json.Unmarshal(errorJSON, event.Error); err != nil {
 					return err
 				}
 			}
 
-			if len(metricsJSON) > 0 && string(metricsJSON) != \"{}\" {
+			if len(metricsJSON) > 0 && string(metricsJSON) != "{}" {
 				event.Metrics = &content.EventMetrics{}
-				if err := json.Unmarshal(metricsJSON, event.Metrics); err !=`
+				if err := json.Unmarshal(metricsJSON, event.Metrics); err != nil {
+					return err
+				}
+			}
+
+			if len(contextJSON) > 0 {
+				if err := json.Unmarshal(contextJSON, &event.Context); err != nil {
+					return err
+				}
+			}
+
+			events = append(events, event)
+		}
+
+		return rows.Err()
+	})
+
+	if err != nil {
+		return nil, database.MapError(err, op)
+	}
+
+	return events, nil
 }
