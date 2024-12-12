@@ -24,3 +24,28 @@ content:
   storagePath: ./storage/content
   maxCacheSize: 1073741824  # 1GB
   defaultTTL: 1h
+
+rateLimit:
+  redis:
+    host: localhost
+    port: 6379
+    database: 0
+    password: ""
+  
+  api:
+    requestsPerMinute: 60
+    burstSize: 10
+    tokenRefreshPerHour: 5
+    refreshBurstSize: 2
+    deviceCodePerInterval: 3
+    deviceCodeInterval: 15m
+  
+  websocket:
+    messagesPerMinute: 600
+    burstSize: 100
+    enableWaiting: true
+  
+  settings:
+    enableWaiting: true
+    maxWaitTime: 5s
+    useClientIP: true

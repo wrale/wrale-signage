@@ -85,9 +85,9 @@ func main() {
 
 	// Initialize Redis client
 	redisClient := redis.NewClient(&redis.Options{
-		Addr:     fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port),
-		Password: cfg.Redis.Password,
-		DB:       cfg.Redis.DB,
+		Addr:     fmt.Sprintf("%s:%d", cfg.RateLimit.Redis.Host, cfg.RateLimit.Redis.Port),
+		Password: cfg.RateLimit.Redis.Password,
+		DB:       cfg.RateLimit.Redis.Database,
 	})
 
 	// Test Redis connection
