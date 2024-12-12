@@ -1,82 +1,204 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ContentSequence } from '../types';
+import { ContentFrame } from './ContentFrame';
+import { TransitionOverlay } from './TransitionOverlay';
+import { DisplayControl } from '../services/websocket';
+import type { ContentSequence, DisplayConfig, ContentItem, ContentEvent, DisplayStatus } from '../types';
 
 interface ContentControllerProps {
-  displayId: string;
+  config: DisplayConfig;
   wsURL: string;
-  onSequenceUpdate: (sequence: ContentSequence) => void;
-  onReloadRequired: () => void;
 }
 
 export const ContentController: React.FC<ContentControllerProps> = ({
-  displayId,
-  wsURL,
-  onSequenceUpdate,
-  onReloadRequired
+  config,
+  wsURL
 }) => {
-  const ws = useRef<WebSocket | null>(null);
-  const [currentUrl, setCurrentUrl] = useState<string>('');
-  const [lastError, setLastError] = useState<string | null>(null);
+  // Display state
+  const [sequence, setSequence] = useState<ContentSequence | null>(null);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [isTransitioning, setIsTransitioning] = useState(false);
+  const [status, setStatus] = useState<DisplayStatus>({
+    displayId: config.displayId,
+    currentUrl: '',
+    currentSequenceVersion: '',
+    state: 'LOADING',
+    updatedAt: new Date().toISOString()
+  });
 
+  // Refs
+  const primaryFrameRef = useRef<HTMLIFrameElement>(null);
+  const secondaryFrameRef = useRef<HTMLIFrameElement>(null);
+  const controlRef = useRef<DisplayControl | null>(null);
+  const contentTimerRef = useRef<number>();
+
+  // Initialize WebSocket control
   useEffect(() => {
-    const connect = () => {
-      const fullURL = `${wsURL}?id=${displayId}`;
-      ws.current = new WebSocket(fullURL);
+    controlRef.current = new DisplayControl({
+      url: wsURL,
+      displayId: config.displayId,
+      config
+    });
 
-      ws.current.onmessage = (event) => {
-        const message = JSON.parse(event.data);
-        
-        switch (message.type) {
-          case 'SEQUENCE_UPDATE':
-            if (message.sequence) {
-              onSequenceUpdate(message.sequence);
-            }
-            break;
-          case 'RELOAD':
-            onReloadRequired();
-            break;
-        }
-      };
+    // Handle sequence updates
+    controlRef.current.on('sequence', (message) => {
+      if (message.sequence) {
+        setSequence(message.sequence);
+        setCurrentIndex(0);
+        scheduleNextContent(message.sequence.items[0]);
+      }
+    });
 
-      ws.current.onclose = () => {
-        // Reconnect after delay
-        setTimeout(connect, 5000);
-      };
+    // Handle errors
+    controlRef.current.on('error', (error) => {
+      setStatus(prev => ({
+        ...prev,
+        state: 'ERROR',
+        lastError: error,
+        updatedAt: new Date().toISOString()
+      }));
+    });
 
-      ws.current.onerror = (error) => {
-        setLastError(error.toString());
-        sendStatus();
-      };
-    };
-
-    connect();
+    // Connect
+    controlRef.current.connect().catch(error => {
+      console.error('Failed to connect:', error);
+      setStatus(prev => ({
+        ...prev,
+        state: 'ERROR',
+        lastError: {
+          code: 'CONNECTION_ERROR',
+          message: 'Failed to connect to control service'
+        },
+        updatedAt: new Date().toISOString()
+      }));
+    });
 
     return () => {
-      if (ws.current) {
-        ws.current.close();
+      controlRef.current?.dispose();
+      if (contentTimerRef.current) {
+        window.clearTimeout(contentTimerRef.current);
       }
     };
-  }, [displayId, wsURL]);
+  }, [config, wsURL]);
 
-  const sendStatus = () => {
-    if (ws.current?.readyState === WebSocket.OPEN) {
-      ws.current.send(JSON.stringify({
-        type: 'STATUS',
-        timestamp: new Date().toISOString(),
-        status: {
-          currentUrl,
-          lastError,
-          updatedAt: new Date().toISOString()
-        }
+  // Schedule next content change
+  const scheduleNextContent = (content: ContentItem) => {
+    if (contentTimerRef.current) {
+      window.clearTimeout(contentTimerRef.current);
+    }
+
+    const duration = typeof content.duration === 'object' 
+      ? content.duration.value ?? 10000 // Default 10s
+      : content.duration;
+
+    contentTimerRef.current = window.setTimeout(() => {
+      if (sequence) {
+        const nextIndex = (currentIndex + 1) % sequence.items.length;
+        handleContentTransition(nextIndex);
+      }
+    }, duration);
+  };
+
+  // Handle content transitions
+  const handleContentTransition = async (nextIndex: number) => {
+    if (!sequence) return;
+
+    try {
+      setIsTransitioning(true);
+      const nextContent = sequence.items[nextIndex];
+
+      // Wait for transition duration
+      await new Promise(resolve => 
+        setTimeout(resolve, nextContent.transition.duration)
+      );
+
+      setCurrentIndex(nextIndex);
+      scheduleNextContent(nextContent);
+
+      setStatus(prev => ({
+        ...prev,
+        currentUrl: nextContent.url,
+        state: 'ACTIVE',
+        updatedAt: new Date().toISOString()
       }));
+
+    } catch (err) {
+      console.error('Transition failed:', err);
+      
+      setStatus(prev => ({
+        ...prev,
+        state: 'ERROR',
+        lastError: {
+          code: 'TRANSITION_ERROR',
+          message: 'Failed to transition to next content'
+        },
+        updatedAt: new Date().toISOString()
+      }));
+
+    } finally {
+      setIsTransitioning(false);
     }
   };
 
-  // Report status changes
-  useEffect(() => {
-    sendStatus();
-  }, [currentUrl, lastError]);
+  // Handle content load errors
+  const handleContentError = (error: Error) => {
+    console.error('Content error:', error);
+    
+    setStatus(prev => ({
+      ...prev,
+      state: 'ERROR',
+      lastError: {
+        code: 'CONTENT_ERROR',
+        message: error.message
+      },
+      updatedAt: new Date().toISOString()
+    }));
 
-  // Public interface
-  return null; // Controller handles WebSocket logic only
+    // Try to recover by moving to next item
+    if (sequence) {
+      const nextIndex = (currentIndex + 1) % sequence.items.length;
+      handleContentTransition(nextIndex);
+    }
+  };
+
+  // Report health events to control service
+  const handleHealthEvent = (event: ContentEvent) => {
+    if (controlRef.current) {
+      controlRef.current.reportHealth(event);
+    }
+  };
+
+  // Render content frames
+  if (!sequence) {
+    return null;
+  }
+
+  const currentContent = sequence.items[currentIndex];
+  const nextContent = sequence.items[(currentIndex + 1) % sequence.items.length];
+
+  return (
+    <div className="relative w-full h-full overflow-hidden bg-black">
+      <ContentFrame
+        ref={primaryFrameRef}
+        content={currentContent}
+        isActive={!isTransitioning}
+        onLoad={() => scheduleNextContent(currentContent)}
+        onError={handleContentError}
+        onHealthEvent={handleHealthEvent}
+      />
+      
+      <ContentFrame
+        ref={secondaryFrameRef}
+        content={nextContent}
+        isActive={isTransitioning}
+        onLoad={() => {}}
+        onError={handleContentError}
+        onHealthEvent={handleHealthEvent}
+      />
+
+      <TransitionOverlay
+        isActive={isTransitioning}
+        config={currentContent.transition}
+      />
+    </div>
+  );
 };
