@@ -63,7 +63,8 @@ func (r *repository) GetURLMetrics(ctx context.Context, url string, since time.T
 	})
 
 	if err != nil {
-		return nil, mapPostgresError(err, op)
+		// Map array aggregation errors properly
+		return nil, mapAggregationError(err, op)
 	}
 
 	return metrics, nil
@@ -72,19 +73,18 @@ func (r *repository) GetURLMetrics(ctx context.Context, url string, since time.T
 // scanBaseMetrics calculates and scans the base metrics with safe JSONB handling
 func (q *MetricsQuery) scanBaseMetrics(ctx context.Context, tx *database.Tx, metrics *content.URLMetrics) error {
 	const baseQuery = `
-		WITH validated_metrics AS (
+		WITH RECURSIVE
+		validated_metrics AS (
 			SELECT
 				timestamp,
 				type,
-				CASE
-					WHEN jsonb_typeof(metrics) = 'object'
-					AND jsonb_typeof(metrics->'loadTime') = 'number'
-					THEN (metrics->>'loadTime')::float
+				CASE WHEN (metrics #>> '{loadTime}') IS NOT NULL 
+					AND jsonb_typeof(metrics -> 'loadTime') = 'number'
+				THEN (metrics ->> 'loadTime')::float
 				END AS load_time,
-				CASE
-					WHEN jsonb_typeof(metrics) = 'object'
-					AND jsonb_typeof(metrics->'renderTime') = 'number'
-					THEN (metrics->>'renderTime')::float
+				CASE WHEN (metrics #>> '{renderTime}') IS NOT NULL 
+					AND jsonb_typeof(metrics -> 'renderTime') = 'number'
+				THEN (metrics ->> 'renderTime')::float
 				END AS render_time
 			FROM content_events
 			WHERE url = $1 AND timestamp >= $2
@@ -94,8 +94,20 @@ func (q *MetricsQuery) scanBaseMetrics(ctx context.Context, tx *database.Tx, met
 				COUNT(*) FILTER (WHERE type = 'CONTENT_LOADED') AS load_count,
 				COUNT(*) FILTER (WHERE type = 'CONTENT_ERROR') AS error_count,
 				MAX(timestamp) AS last_seen,
-				AVG(load_time) FILTER (WHERE type = 'CONTENT_LOADED' AND load_time IS NOT NULL) AS avg_load_time,
-				AVG(render_time) FILTER (WHERE type = 'CONTENT_LOADED' AND render_time IS NOT NULL) AS avg_render_time
+				COALESCE(
+					AVG(NULLIF(load_time, 0)) FILTER (
+						WHERE type = 'CONTENT_LOADED' 
+						AND load_time IS NOT NULL
+					), 
+					0
+				) AS avg_load_time,
+				COALESCE(
+					AVG(NULLIF(render_time, 0)) FILTER (
+						WHERE type = 'CONTENT_LOADED' 
+						AND render_time IS NOT NULL
+					), 
+					0
+				) AS avg_render_time
 			FROM validated_metrics
 		)
 		SELECT
@@ -119,19 +131,18 @@ func (q *MetricsQuery) scanBaseMetrics(ctx context.Context, tx *database.Tx, met
 // scanErrorRates calculates and scans error rates with safe JSONB handling
 func (q *MetricsQuery) scanErrorRates(ctx context.Context, tx *database.Tx, metrics *content.URLMetrics) error {
 	const errorQuery = `
-		WITH validated_errors AS (
-			SELECT
-				CASE 
-					WHEN jsonb_typeof(error) = 'object'
-					AND jsonb_typeof(error->'code') = 'string'
-					THEN error->>'code'
-					ELSE 'UNKNOWN_ERROR'
-				END as error_code
+		WITH RECURSIVE
+		validated_errors AS (
+			SELECT COALESCE(
+				NULLIF(error #>> '{code}', ''),
+				'UNKNOWN_ERROR'
+			) as error_code
 			FROM content_events
 			WHERE 
 				url = $1 
 				AND timestamp >= $2 
 				AND type = 'CONTENT_ERROR'
+				AND error IS NOT NULL
 		),
 		error_summary AS (
 			SELECT
@@ -143,16 +154,19 @@ func (q *MetricsQuery) scanErrorRates(ctx context.Context, tx *database.Tx, metr
 		)
 		SELECT
 			error_code,
-			ROUND(
-				(error_count::float * 100.0 / NULLIF(total_errors, 0))::numeric,
-				2
-			)::float as error_rate
+			COALESCE(
+				ROUND(
+					(error_count::float * 100.0 / NULLIF(total_errors, 0))::numeric,
+					2
+				)::float,
+				0.0
+			) as error_rate
 		FROM error_summary;
 	`
 
 	rows, err := tx.QueryContext(ctx, errorQuery, q.URL, q.Since)
 	if err != nil {
-		return err
+		return fmt.Errorf("error rate query failed: %w", err)
 	}
 	defer rows.Close()
 
@@ -160,9 +174,61 @@ func (q *MetricsQuery) scanErrorRates(ctx context.Context, tx *database.Tx, metr
 		var code string
 		var rate float64
 		if err := rows.Scan(&code, &rate); err != nil {
-			return err
+			return fmt.Errorf("error scanning error rates: %w", err)
 		}
 		metrics.ErrorRates[code] = rate
 	}
 	return rows.Err()
+}
+
+// mapAggregationError converts PostgreSQL array/aggregation errors to domain errors
+func mapAggregationError(err error, op string) error {
+	if err == nil {
+		return nil
+	}
+
+	// First try standard error mapping
+	if mapErr := database.MapError(err, op); mapErr != nil {
+		// Check for array/aggregation specific errors
+		if isAggregationError(err) {
+			return &content.Error{
+				Code:    "CALCULATION_ERROR",
+				Message: "failed to calculate metrics",
+				Op:      op,
+				Err:     err,
+			}
+		}
+		return mapErr
+	}
+
+	return &content.Error{
+		Code:    "INTERNAL",
+		Message: "internal metrics error",
+		Op:      op,
+		Err:     err,
+	}
+}
+
+// isAggregationError checks if error is related to array/aggregation operations
+func isAggregationError(err error) bool {
+	errStr := err.Error()
+	return contains(errStr, []string{
+		"array_agg",
+		"aggregate",
+		"division by zero",
+		"null value",
+		"invalid input syntax",
+	})
+}
+
+// contains checks if str contains any of the substrings
+func contains(str string, substrings []string) bool {
+	for _, sub := range substrings {
+		if sub != "" && sub != str {
+			if str != "" && str != sub {
+				return true
+			}
+		}
+	}
+	return false
 }
