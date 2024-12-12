@@ -7,20 +7,13 @@
 import monitorSource from './source';
 
 /**
- * Get content monitor script as a string for injection
+ * Monitor script ready for injection
  */
-export function getMonitorScript(): string {
-  // Remove import/export statements and wrap in IIFE
-  const script = `
-    (function() {
-      ${monitorSource}
-    })();
-  `;
+export const monitorScript = `
+  (function() {
+    ${monitorSource}
+  })();
+`;
 
-  return script;
-}
-
-/**
- * Export monitor script as default for direct use in frame injection
- */
-export default getMonitorScript();
+// Default export for convenience
+export default monitorScript;
