@@ -11,7 +11,7 @@ import (
 	"github.com/wrale/wrale-signage/internal/wsignd/database"
 )
 
-// GetURLMetrics implements content.Repository.GetURLMetrics
+// GetURLMetrics implements content.Repository.GetURLMetrics using safe JSONB handling
 func (r *repository) GetURLMetrics(ctx context.Context, url string, since time.Time) (*content.URLMetrics, error) {
 	const op = "ContentRepository.GetURLMetrics"
 
@@ -29,7 +29,7 @@ func (r *repository) GetURLMetrics(ctx context.Context, url string, since time.T
 			WHERE url = $1 AND timestamp >= $2
 		`, url, since).Scan(&eventCount)
 		if err != nil {
-			return fmt.Errorf("failed to check event existence: %w", err)
+			return fmt.Errorf("failed to check event count: %w", err)
 		}
 
 		if eventCount == 0 {
@@ -37,23 +37,31 @@ func (r *repository) GetURLMetrics(ctx context.Context, url string, since time.T
 			return nil
 		}
 
-		// Get basic metrics with enhanced error handling
+		// Get basic metrics with safe JSONB handling
 		const baseQuery = `
 			WITH event_metrics AS (
 				SELECT
 					COUNT(*) FILTER (WHERE type = 'CONTENT_LOADED') AS load_count,
 					COUNT(*) FILTER (WHERE type = 'CONTENT_ERROR') AS error_count,
 					MAX(timestamp) AS last_seen,
-					AVG(CASE 
-						WHEN type = 'CONTENT_LOADED' AND metrics->>'loadTime' IS NOT NULL 
-						THEN (metrics->>'loadTime')::float 
-						ELSE NULL 
-					END) AS avg_load_time,
-					AVG(CASE 
-						WHEN type = 'CONTENT_LOADED' AND metrics->>'renderTime' IS NOT NULL 
-						THEN (metrics->>'renderTime')::float 
-						ELSE NULL 
-					END) AS avg_render_time
+					AVG(
+						CASE 
+							WHEN type = 'CONTENT_LOADED' 
+								AND metrics IS NOT NULL 
+								AND jsonb_typeof(metrics->'loadTime') = 'number'
+							THEN (metrics->>'loadTime')::float 
+							ELSE NULL 
+						END
+					) AS avg_load_time,
+					AVG(
+						CASE 
+							WHEN type = 'CONTENT_LOADED' 
+								AND metrics IS NOT NULL 
+								AND jsonb_typeof(metrics->'renderTime') = 'number'
+							THEN (metrics->>'renderTime')::float 
+							ELSE NULL 
+						END
+					) AS avg_render_time
 				FROM content_events
 				WHERE url = $1 AND timestamp >= $2
 			)
@@ -78,45 +86,50 @@ func (r *repository) GetURLMetrics(ctx context.Context, url string, since time.T
 			return fmt.Errorf("failed to scan base metrics: %w", err)
 		}
 
-		// Get error rates only if we have errors
+		// Get error rates only if we have errors, using safe JSONB handling
 		if metrics.ErrorCount > 0 {
-			var errorRatesJSON []byte
-			err = tx.QueryRowContext(ctx, `
+			const errorQuery = `
 				WITH error_stats AS (
 					SELECT
-						error->>'code' as error_code,
+						CASE 
+							WHEN error IS NOT NULL AND jsonb_typeof(error->'code') = 'string'
+							THEN error->>'code'
+							ELSE 'UNKNOWN_ERROR'
+						END as error_code,
 						COUNT(*) as error_count,
-						(SELECT COUNT(*) FROM content_events WHERE url = $1 AND timestamp >= $2) as total_events
+						COUNT(*) OVER () as total_errors
 					FROM content_events
 					WHERE 
 						url = $1 
 						AND timestamp >= $2 
 						AND type = 'CONTENT_ERROR'
-						AND error->>'code' IS NOT NULL
 					GROUP BY error->>'code'
 				)
 				SELECT
-					COALESCE(
-						jsonb_object_agg(
-							error_code,
-							ROUND(
-								(error_count::float * 100.0 / total_events::float)::numeric,
-								2
-							)::float
-						),
-						'{}'::jsonb
-					) as error_rates
+					error_code,
+					ROUND(
+						(error_count::float * 100.0 / NULLIF(total_errors, 0))::numeric,
+						2
+					)::float as error_rate
 				FROM error_stats;
-			`, url, since).Scan(&errorRatesJSON)
+			`
 
-			if err != nil && err != sql.ErrNoRows {
-				return fmt.Errorf("failed to scan error rates: %w", err)
+			rows, err := tx.QueryContext(ctx, errorQuery, url, since)
+			if err != nil {
+				return fmt.Errorf("failed to query error rates: %w", err)
 			}
+			defer rows.Close()
 
-			if len(errorRatesJSON) > 0 {
-				if err := json.Unmarshal(errorRatesJSON, &metrics.ErrorRates); err != nil {
-					return fmt.Errorf("failed to unmarshal error rates: %w", err)
+			for rows.Next() {
+				var code string
+				var rate float64
+				if err := rows.Scan(&code, &rate); err != nil {
+					return fmt.Errorf("failed to scan error rate: %w", err)
 				}
+				metrics.ErrorRates[code] = rate
+			}
+			if err = rows.Err(); err != nil {
+				return fmt.Errorf("error iterating error rates: %w", err)
 			}
 		}
 

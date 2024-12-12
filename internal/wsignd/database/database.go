@@ -112,7 +112,7 @@ func RunInTx(ctx context.Context, db *sql.DB, opts *TxOptions, fn func(*Tx) erro
 	return nil
 }
 
-// MapError converts database-specific errors to domain errors
+// MapError converts database-specific errors to domain errors while preserving context
 func MapError(err error, op string) error {
 	if err == nil {
 		return nil
@@ -121,6 +121,7 @@ func MapError(err error, op string) error {
 	// Handle specific PostgreSQL errors
 	var pqErr *pq.Error
 	if errors.As(err, &pqErr) {
+		details := fmt.Sprintf("postgres error: code=%s, message=%s, detail=%s", pqErr.Code, pqErr.Message, pqErr.Detail)
 		switch pqErr.Code {
 		case "23505": // unique_violation
 			if strings.Contains(pqErr.Error(), "displays_pkey") {
@@ -128,7 +129,7 @@ func MapError(err error, op string) error {
 					"CONFLICT",
 					"display ID already exists",
 					op,
-					werrors.ErrConflict,
+					fmt.Errorf("%w: %s", werrors.ErrConflict, details),
 				)
 			}
 			if strings.Contains(pqErr.Error(), "displays_name_key") {
@@ -136,28 +137,42 @@ func MapError(err error, op string) error {
 					"DISPLAY_EXISTS",
 					fmt.Sprintf("display already exists: %s", strings.TrimPrefix(pqErr.Message, "Key (name)=(")),
 					op,
-					werrors.ErrConflict,
+					fmt.Errorf("%w: %s", werrors.ErrConflict, details),
 				)
 			}
 			return werrors.NewError(
 				"CONFLICT",
 				"resource already exists",
 				op,
-				werrors.ErrConflict,
+				fmt.Errorf("%w: %s", werrors.ErrConflict, details),
 			)
 		case "23503": // foreign_key_violation
 			return werrors.NewError(
 				"NOT_FOUND",
 				"referenced resource not found",
 				op,
-				werrors.ErrNotFound,
+				fmt.Errorf("%w: %s", werrors.ErrNotFound, details),
 			)
 		case "23514": // check_violation
 			return werrors.NewError(
 				"INVALID_INPUT",
 				pqErr.Message,
 				op,
-				werrors.ErrInvalidInput,
+				fmt.Errorf("%w: %s", werrors.ErrInvalidInput, details),
+			)
+		case "22P02": // invalid_text_representation
+			return werrors.NewError(
+				"INVALID_INPUT",
+				"invalid value format",
+				op,
+				fmt.Errorf("%w: %s", werrors.ErrInvalidInput, details),
+			)
+		case "42883": // undefined_function
+			return werrors.NewError(
+				"INTERNAL",
+				"database operation error",
+				op,
+				fmt.Errorf("internal error (undefined function): %s", details),
 			)
 		}
 	}
@@ -168,16 +183,16 @@ func MapError(err error, op string) error {
 			"NOT_FOUND",
 			"resource not found",
 			op,
-			werrors.ErrNotFound,
+			fmt.Errorf("%w: no rows returned", werrors.ErrNotFound),
 		)
 	}
 
-	// Map other errors as internal errors
+	// Map other errors as internal errors with preserved context
 	return werrors.NewError(
 		"INTERNAL",
 		"internal database error",
 		op,
-		err,
+		fmt.Errorf("database error: %w", err),
 	)
 }
 
