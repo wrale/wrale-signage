@@ -18,7 +18,7 @@ This demo showcases the core functionality of Wrale Signage:
 1. Start development database:
 ```bash
 docker-compose down -v
-docker-compose up -d postgres
+docker-compose up -d
 
 sleep 5  # Wait for PostgreSQL to start
 ./scripts/init-test-db.sh
