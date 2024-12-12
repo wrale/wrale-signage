@@ -55,30 +55,31 @@ func (h *Handler) Router() *chi.Mux {
 
 	// API Routes v1alpha1
 	r.Route("/api/v1alpha1/displays", func(r chi.Router) {
-		// Public device activation endpoints with rate limits
+		// Public endpoints with rate limits
 		r.Group(func(r chi.Router) {
-			// Device code requests have strict limits
-			r.Use(rateLimits.DeviceCodeLimiter())
+			// Initial display registration endpoint
+			r.With(rateLimits.APIRequestLimiter()).Post("/", h.RegisterDisplay)
 
-			r.Post("/device/code", h.RequestDeviceCode)
-			r.Post("/activate", h.ActivateDeviceCode)
+			// Device activation endpoints
+			r.Group(func(r chi.Router) {
+				r.Use(rateLimits.DeviceCodeLimiter())
+				r.Post("/device/code", h.RequestDeviceCode)
+				r.Post("/activate", h.ActivateDeviceCode)
+			})
+
+			// Token management
+			r.Group(func(r chi.Router) {
+				r.Use(rateLimits.TokenRefreshLimiter())
+				r.Post("/token/refresh", h.RefreshToken)
+			})
 		})
 
-		// Token management with refresh limits
-		r.Group(func(r chi.Router) {
-			r.Use(rateLimits.TokenRefreshLimiter())
-
-			r.Post("/token/refresh", h.RefreshToken)
-		})
-
-		// Protected display management routes
+		// Protected display management routes requiring authentication
 		r.Group(func(r chi.Router) {
 			// Order: Auth -> Rate Limit -> Routes
 			r.Use(authMiddleware(h.auth, h.logger))
 			r.Use(rateLimits.APIRequestLimiter())
 
-			// Standard API endpoints
-			r.Post("/", h.RegisterDisplay)
 			r.Route("/{id}", func(r chi.Router) {
 				r.Get("/", h.GetDisplay)
 				r.Put("/activate", h.ActivateDisplay)
