@@ -20,31 +20,39 @@ func (r *repository) GetURLMetrics(ctx context.Context, url string, since time.T
 	}
 
 	err := database.RunInTx(ctx, r.db, &database.TxOptions{ReadOnly: true}, func(tx *database.Tx) error {
-		// Use a CTE to calculate base metrics
+		// Use CTEs for clear and efficient metric calculation
 		const query = `
-			WITH event_stats AS (
+			WITH base_stats AS (
 				SELECT
-					COUNT(*) AS total_events,
+					COUNT(*) FILTER (WHERE type = 'CONTENT_LOADED') AS load_count,
 					COUNT(*) FILTER (WHERE type = 'CONTENT_ERROR') AS error_count,
-					MAX(EXTRACT(EPOCH FROM timestamp)) AS last_seen_ts,
-					AVG(CASE
-						WHEN metrics->>'loadTime' IS NOT NULL 
-						THEN (metrics->>'loadTime')::float 
-						ELSE 0 
-					END) AS avg_load_time,
-					AVG(CASE
-						WHEN metrics->>'renderTime' IS NOT NULL 
-						THEN (metrics->>'renderTime')::float 
-						ELSE 0 
-					END) AS avg_render_time
+					MAX(EXTRACT(EPOCH FROM timestamp)) AS last_seen_ts
 				FROM content_events
 				WHERE url = $1 AND timestamp >= $2
 			),
+			performance_stats AS (
+				SELECT
+					COALESCE(AVG((metrics->>'loadTime')::float), 0) AS avg_load_time,
+					COALESCE(AVG((metrics->>'renderTime')::float), 0) AS avg_render_time
+				FROM content_events
+				WHERE 
+					url = $1 
+					AND timestamp >= $2
+					AND type = 'CONTENT_LOADED'
+					AND metrics->>'loadTime' IS NOT NULL
+			),
 			error_stats AS (
 				SELECT
-					(error->>'code')::text AS error_code,
+					error->>'code' AS error_code,
 					COUNT(*) AS code_count,
-					COUNT(*) * 100.0 / NULLIF((SELECT total_events FROM event_stats), 0) AS error_rate
+					-- Calculate error rate against total number of loads and errors
+					ROUND(
+						COUNT(*) * 100.0 / NULLIF(
+							(SELECT load_count + error_count FROM base_stats),
+							0
+						),
+						2
+					) AS error_rate
 				FROM content_events
 				WHERE 
 					url = $1 
@@ -54,20 +62,21 @@ func (r *repository) GetURLMetrics(ctx context.Context, url string, since time.T
 				GROUP BY error->>'code'
 			)
 			SELECT
-				es.total_events,
-				es.error_count,
-				es.last_seen_ts,
-				es.avg_load_time,
-				es.avg_render_time,
+				b.load_count,
+				b.error_count,
+				b.last_seen_ts,
+				p.avg_load_time,
+				p.avg_render_time,
 				COALESCE(
-					json_object_agg(
-						er.error_code,
-						er.error_rate
-					) FILTER (WHERE er.error_code IS NOT NULL),
-					'{}'::json
+					jsonb_object_agg(
+						e.error_code,
+						e.error_rate
+					) FILTER (WHERE e.error_code IS NOT NULL),
+					'{}'::jsonb
 				) AS error_rates
-			FROM event_stats es
-			LEFT JOIN error_stats er ON true;
+			FROM base_stats b
+			CROSS JOIN performance_stats p
+			LEFT JOIN error_stats e ON true;
 		`
 
 		var errorRatesJSON []byte
