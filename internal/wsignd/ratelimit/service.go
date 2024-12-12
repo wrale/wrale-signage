@@ -10,7 +10,8 @@ import (
 	"github.com/wrale/wrale-signage/internal/wsignd/config"
 )
 
-type service struct {
+// RateLimitService implements the Service interface
+type RateLimitService struct {
 	store   Store
 	logger  *slog.Logger
 	limits  map[string]Limit
@@ -19,7 +20,7 @@ type service struct {
 
 // NewService creates a new rate limiting service
 func NewService(store Store, logger *slog.Logger) Service {
-	return &service{
+	return &RateLimitService{
 		store:  store,
 		logger: logger,
 		limits: make(map[string]Limit),
@@ -27,7 +28,7 @@ func NewService(store Store, logger *slog.Logger) Service {
 }
 
 // RegisterConfiguredLimits sets up rate limits from configuration
-func (s *service) RegisterConfiguredLimits(cfg config.RateLimitConfig) {
+func (s *RateLimitService) RegisterConfiguredLimits(cfg config.RateLimitConfig) {
 	// Token rate limits
 	s.RegisterLimit("token_refresh", Limit{
 		Rate:        cfg.API.TokenRefreshPerHour,
@@ -62,7 +63,7 @@ func (s *service) RegisterConfiguredLimits(cfg config.RateLimitConfig) {
 }
 
 // RegisterLimit adds or updates a rate limit configuration
-func (s *service) RegisterLimit(limitType string, limit Limit) error {
+func (s *RateLimitService) RegisterLimit(limitType string, limit Limit) error {
 	if limit.Rate <= 0 || limit.Period <= 0 {
 		return ErrInvalidLimit
 	}
@@ -75,7 +76,7 @@ func (s *service) RegisterLimit(limitType string, limit Limit) error {
 }
 
 // Allow checks if an operation should be allowed
-func (s *service) Allow(ctx context.Context, key LimitKey) error {
+func (s *RateLimitService) Allow(ctx context.Context, key LimitKey) error {
 	if key.Type == "" {
 		return ErrInvalidKey
 	}
@@ -113,7 +114,7 @@ func (s *service) Allow(ctx context.Context, key LimitKey) error {
 }
 
 // GetLimit returns the configured limit for a key type
-func (s *service) GetLimit(limitType string) Limit {
+func (s *RateLimitService) GetLimit(limitType string) Limit {
 	s.limitsM.RLock()
 	defer s.limitsM.RUnlock()
 
@@ -121,7 +122,7 @@ func (s *service) GetLimit(limitType string) Limit {
 }
 
 // Reset clears rate limit counters for a key
-func (s *service) Reset(ctx context.Context, key LimitKey) error {
+func (s *RateLimitService) Reset(ctx context.Context, key LimitKey) error {
 	if key.Type == "" {
 		return ErrInvalidKey
 	}
@@ -140,7 +141,7 @@ func (s *service) Reset(ctx context.Context, key LimitKey) error {
 }
 
 // BulkReset clears rate limits for multiple keys atomically
-func (s *service) BulkReset(ctx context.Context, keys []LimitKey) error {
+func (s *RateLimitService) BulkReset(ctx context.Context, keys []LimitKey) error {
 	for _, key := range keys {
 		if key.Type == "" {
 			return fmt.Errorf("%w: empty type in key", ErrInvalidKey)
@@ -163,7 +164,7 @@ func (s *service) BulkReset(ctx context.Context, keys []LimitKey) error {
 }
 
 // RegisterDefaultLimits configures standard rate limits
-func (s *service) RegisterDefaultLimits() {
+func (s *RateLimitService) RegisterDefaultLimits() {
 	// Token rate limits
 	s.RegisterLimit("token_refresh", Limit{
 		Rate:        5, // 5 refreshes

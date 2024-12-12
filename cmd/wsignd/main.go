@@ -148,8 +148,8 @@ func setupRouter(cfg *config.Config, db *sql.DB, redisClient *redis.Client, logg
 	rateLimitStore := ratelimitredis.NewStore(redisClient)
 	rateLimitService := ratelimit.NewService(rateLimitStore, logger)
 	// Register configured limits
-	rateLimitService.RegisterDefaultLimits()                                      // Always set defaults first
-	rateLimitService.(*ratelimit.service).RegisterConfiguredLimits(cfg.RateLimit) // Override with config if available
+	rateLimitService.RegisterDefaultLimits()                 // Always set defaults first
+	rateLimitService.RegisterConfiguredLimits(cfg.RateLimit) // Register configured overrides
 
 	// Set up auth service
 	authRepo := authpg.NewRepository(db, logger)

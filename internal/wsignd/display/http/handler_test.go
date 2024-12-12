@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/mock"
 	"github.com/wrale/wrale-signage/internal/wsignd/auth"
+	"github.com/wrale/wrale-signage/internal/wsignd/config"
 	"github.com/wrale/wrale-signage/internal/wsignd/display"
 	"github.com/wrale/wrale-signage/internal/wsignd/display/activation"
 	"github.com/wrale/wrale-signage/internal/wsignd/ratelimit"
@@ -148,6 +149,14 @@ func (m *mockRateLimitService) GetLimit(limitType string) ratelimit.Limit {
 func (m *mockRateLimitService) Reset(ctx context.Context, key ratelimit.LimitKey) error {
 	args := m.Called(ctx, key)
 	return args.Error(0)
+}
+
+func (m *mockRateLimitService) RegisterDefaultLimits() {
+	m.Called()
+}
+
+func (m *mockRateLimitService) RegisterConfiguredLimits(cfg config.RateLimitConfig) {
+	m.Called(cfg)
 }
 
 // newTestHandler creates a new handler with mock services for testing
