@@ -3,17 +3,17 @@ package auth
 import (
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/wrale/wrale-signage/internal/wsignd/errors"
 )
 
 var (
-	ErrTokenNotFound = errors.New("NOT_FOUND", "token not found")
-	ErrTokenExpired  = errors.New("TOKEN_EXPIRED", "token expired")
-	ErrTokenInvalid  = errors.New("INVALID_TOKEN", "invalid token")
-	ErrTokenMismatch = errors.New("TOKEN_MISMATCH", "token mismatch")
+	ErrTokenNotFound = errors.New("token not found")
+	ErrTokenExpired  = errors.New("token expired")
+	ErrTokenInvalid  = errors.New("invalid token")
+	ErrTokenMismatch = errors.New("token mismatch")
 )
 
 // Token represents a display's authentication tokens

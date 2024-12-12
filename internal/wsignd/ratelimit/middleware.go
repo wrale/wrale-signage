@@ -1,7 +1,6 @@
 package ratelimit
 
 import (
-	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"

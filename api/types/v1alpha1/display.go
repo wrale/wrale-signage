@@ -92,12 +92,6 @@ type DisplayRegistrationRequest struct {
 	ActivationCode string `json:"activationCode"`
 }
 
-// DisplayRegistrationResponse contains the result of a registration request
-type DisplayRegistrationResponse struct {
-	// Display is the newly registered display
-	Display *Display `json:"display"`
-}
-
 // DisplayFilter defines criteria for listing displays
 type DisplayFilter struct {
 	// SiteID filters by location site ID
