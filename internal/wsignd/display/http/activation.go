@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/wrale/wrale-signage/api/types/v1alpha1"
+	"github.com/wrale/wrale-signage/internal/wsignd/auth"
 	"github.com/wrale/wrale-signage/internal/wsignd/display"
 	"github.com/wrale/wrale-signage/internal/wsignd/display/activation"
 	werrors "github.com/wrale/wrale-signage/internal/wsignd/errors"
@@ -95,6 +96,19 @@ func (h *Handler) ActivateDeviceCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Generate authentication tokens
+	token, err := h.auth.CreateToken(r.Context(), displayID)
+	if err != nil {
+		h.logger.Error("failed to generate auth token",
+			"error", err,
+			"requestID", reqID,
+			"displayID", displayID,
+		)
+		// Continue with activation but without tokens
+		h.writeError(w, werrors.NewError("TOKEN_ERROR", "activation succeeded but token generation failed", "ActivateDeviceCode", err), http.StatusInternalServerError)
+		return
+	}
+
 	resp := &v1alpha1.DisplayRegistrationResponse{
 		Display: &v1alpha1.Display{
 			TypeMeta: v1alpha1.TypeMeta{
@@ -119,6 +133,13 @@ func (h *Handler) ActivateDeviceCode(w http.ResponseWriter, r *http.Request) {
 				Version:  display.Version,
 			},
 		},
+		Auth: &v1alpha1.DisplayAuthTokens{
+			AccessToken:      token.AccessToken,
+			RefreshToken:     token.RefreshToken,
+			TokenType:        "Bearer",
+			ExpiresIn:        int(time.Until(token.AccessTokenExpiry).Seconds()),
+			RefreshExpiresIn: int(time.Until(token.RefreshTokenExpiry).Seconds()),
+		},
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -128,6 +149,52 @@ func (h *Handler) ActivateDeviceCode(w http.ResponseWriter, r *http.Request) {
 			"requestID", reqID,
 		)
 		h.writeError(w, werrors.NewError("ENCODING_ERROR", "failed to encode response", "ActivateDeviceCode", err), http.StatusInternalServerError)
+		return
+	}
+}
+
+// RefreshToken handles token refresh requests
+func (h *Handler) RefreshToken(w http.ResponseWriter, r *http.Request) {
+	reqID := middleware.GetReqID(r.Context())
+
+	// Get refresh token from Authorization header
+	refreshToken := r.Header.Get("Authorization")
+	if refreshToken == "" {
+		http.Error(w, "missing refresh token", http.StatusUnauthorized)
+		return
+	}
+
+	// Remove "Bearer " prefix if present
+	if len(refreshToken) > 7 && refreshToken[:7] == "Bearer " {
+		refreshToken = refreshToken[7:]
+	}
+
+	// Generate new token pair
+	token, err := h.auth.RefreshToken(r.Context(), refreshToken)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if err == auth.ErrTokenExpired || err == auth.ErrTokenNotFound {
+			status = http.StatusUnauthorized
+		}
+		h.writeError(w, err, status)
+		return
+	}
+
+	resp := &v1alpha1.DisplayAuthTokens{
+		AccessToken:      token.AccessToken,
+		RefreshToken:     token.RefreshToken,
+		TokenType:        "Bearer",
+		ExpiresIn:        int(time.Until(token.AccessTokenExpiry).Seconds()),
+		RefreshExpiresIn: int(time.Until(token.RefreshTokenExpiry).Seconds()),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		h.logger.Error("failed to encode response",
+			"error", err,
+			"requestID", reqID,
+		)
+		h.writeError(w, werrors.NewError("ENCODING_ERROR", "failed to encode response", "RefreshToken", err), http.StatusInternalServerError)
 		return
 	}
 }

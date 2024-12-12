@@ -7,6 +7,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"log/slog"
 
+	"github.com/wrale/wrale-signage/internal/wsignd/auth"
 	"github.com/wrale/wrale-signage/internal/wsignd/display"
 	"github.com/wrale/wrale-signage/internal/wsignd/display/activation"
 )
@@ -15,15 +16,17 @@ import (
 type Handler struct {
 	service    display.Service
 	activation activation.Service
+	auth       auth.Service
 	logger     *slog.Logger
 	hub        *Hub
 }
 
 // NewHandler creates a new display HTTP handler
-func NewHandler(service display.Service, activation activation.Service, logger *slog.Logger) *Handler {
+func NewHandler(service display.Service, activation activation.Service, auth auth.Service, logger *slog.Logger) *Handler {
 	h := &Handler{
 		service:    service,
 		activation: activation,
+		auth:       auth,
 		logger:     logger,
 	}
 	h.hub = newHub(logger)
@@ -44,18 +47,25 @@ func (h *Handler) Router() *chi.Mux {
 
 	// API Routes v1alpha1
 	r.Route("/api/v1alpha1/displays", func(r chi.Router) {
-		// Device activation flow
+		// Public device activation flow
 		r.Post("/device/code", h.RequestDeviceCode)
 		r.Post("/activate", h.ActivateDeviceCode)
 
-		// Display registration and management
-		r.Post("/", h.RegisterDisplay)
-		r.Route("/{id}", func(r chi.Router) {
-			r.Get("/", h.GetDisplay)
-			r.Put("/activate", h.ActivateDisplay)
-			r.Put("/last-seen", h.UpdateLastSeen)
+		// Protected display management routes
+		r.Group(func(r chi.Router) {
+			r.Use(authMiddleware(h.auth, h.logger))
+
+			r.Post("/", h.RegisterDisplay)
+			r.Route("/{id}", func(r chi.Router) {
+				r.Get("/", h.GetDisplay)
+				r.Put("/activate", h.ActivateDisplay)
+				r.Put("/last-seen", h.UpdateLastSeen)
+			})
+			r.Get("/ws", h.ServeWs)
 		})
-		r.Get("/ws", h.ServeWs)
+
+		// Token management
+		r.Post("/token/refresh", h.RefreshToken)
 	})
 
 	return r
