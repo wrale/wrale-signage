@@ -126,6 +126,11 @@ func (m *mockAuthService) RefreshToken(ctx context.Context, refreshToken string)
 	return args.Get(0).(*auth.Token), args.Error(1)
 }
 
+func (m *mockAuthService) RevokeTokens(ctx context.Context, displayID uuid.UUID) error {
+	args := m.Called(ctx, displayID)
+	return args.Error(0)
+}
+
 type mockRateLimitService struct {
 	mock.Mock
 }

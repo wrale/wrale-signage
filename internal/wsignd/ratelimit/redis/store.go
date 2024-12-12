@@ -103,13 +103,13 @@ func (s *Store) storeKeyInfo(ctx context.Context, key ratelimit.LimitKey) error 
 		LastSeen: time.Now(),
 	}
 
-	data, err := json.Marshal(info)
+	b, err := json.Marshal(info)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ratelimit.ErrStoreError, err)
 	}
 
 	infoKey := fmt.Sprintf("rate:info:%s", s.keyStr(key))
-	err = s.client.Set(ctx, infoKey, string(data), 24*time.Hour).Err()
+	err = s.client.Set(ctx, infoKey, string(b), 24*time.Hour).Err()
 	if err != nil {
 		return fmt.Errorf("%w: %v", ratelimit.ErrStoreError, err)
 	}
@@ -135,12 +135,12 @@ func (s *Store) updateKeyInfo(ctx context.Context, key ratelimit.LimitKey) error
 	}
 
 	info.LastSeen = time.Now()
-	data, err = json.Marshal(info)
+	b, err := json.Marshal(info)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ratelimit.ErrStoreError, err)
 	}
 
-	err = s.client.Set(ctx, infoKey, string(data), 24*time.Hour).Err()
+	err = s.client.Set(ctx, infoKey, string(b), 24*time.Hour).Err()
 	if err != nil {
 		return fmt.Errorf("%w: %v", ratelimit.ErrStoreError, err)
 	}
