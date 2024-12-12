@@ -11,8 +11,8 @@ type Service interface {
 	// GenerateCode creates a new device code pair
 	GenerateCode(ctx context.Context) (*DeviceCode, error)
 
-	// ActivateCode activates a device using its code
-	ActivateCode(ctx context.Context, code string) (uuid.UUID, error)
+	// ActivateCode activates a device using its code and display ID
+	ActivateCode(ctx context.Context, code string, displayID uuid.UUID) error
 
 	// ValidateCode checks if a device code is valid and unused
 	ValidateCode(ctx context.Context, code string) (*DeviceCode, error)
@@ -41,22 +41,21 @@ func (s *DefaultService) GenerateCode(ctx context.Context) (*DeviceCode, error) 
 	return code, nil
 }
 
-func (s *DefaultService) ActivateCode(ctx context.Context, code string) (uuid.UUID, error) {
+func (s *DefaultService) ActivateCode(ctx context.Context, code string, displayID uuid.UUID) error {
 	deviceCode, err := s.repo.FindByUserCode(code)
 	if err != nil {
-		return uuid.Nil, err
+		return err
 	}
 
-	displayID := uuid.New()
 	if err := deviceCode.Activate(displayID); err != nil {
-		return uuid.Nil, err
+		return err
 	}
 
 	if err := s.repo.Save(deviceCode); err != nil {
-		return uuid.Nil, err
+		return err
 	}
 
-	return displayID, nil
+	return nil
 }
 
 func (s *DefaultService) ValidateCode(ctx context.Context, code string) (*DeviceCode, error) {
