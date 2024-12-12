@@ -1,5 +1,6 @@
-import React, { forwardRef, useCallback, useEffect } from 'react';
+import React, { forwardRef, useCallback, useEffect, useRef } from 'react';
 import type { ContentItem, ContentEvent } from '../types';
+import monitorScript from '../contentMonitor';
 
 interface ContentFrameProps {
   content: ContentItem;
@@ -11,51 +12,81 @@ interface ContentFrameProps {
 
 export const ContentFrame = forwardRef<HTMLIFrameElement, ContentFrameProps>(
   ({ content, isActive, onLoad, onError, onHealthEvent }, ref) => {
+    const startTime = useRef(performance.now());
+    const loadReported = useRef(false);
+
+    // Handle initial frame load
     const handleLoad = useCallback(() => {
       if (!ref || !('current' in ref) || !ref.current) return;
 
       try {
         const frame = ref.current;
-        const loadTime = performance.now();
+        
+        // Inject monitoring script
+        const script = document.createElement('script');
+        script.textContent = monitorScript;
+        frame.contentDocument?.head.appendChild(script);
 
-        // Report content loaded
-        onHealthEvent({
-          type: 'CONTENT_LOADED',
-          contentUrl: content.url,
-          timestamp: Date.now(),
-          metrics: {
-            loadTime,
-            renderTime: loadTime, // Initial estimate
-            resourceStats: {
-              // These could be enhanced with more detailed stats
-              imageCount: 0,
-              scriptCount: 0,
-              totalBytes: 0
-            }
+        // Initialize frame
+        frame.contentWindow?.postMessage({
+          type: 'CONTENT_READY',
+          config: {
+            reportInterval: 5000, // Health check interval
+            contentUrl: content.url,
+            contentType: content.duration.type
           }
-        });
+        }, '*');
 
-        // Signal frame is ready
-        frame.contentWindow?.postMessage({ type: 'CONTENT_READY' }, '*');
-        onLoad();
+        // Load reported through monitoring script
       } catch (err) {
         const error = err instanceof Error ? err : new Error('Frame load failed');
-        onError(error);
+        handleError(error);
       }
-    }, [content.url, onLoad, onError, onHealthEvent]);
+    }, [content, onLoad]);
 
+    // Handle messages from frame
     const handleMessage = useCallback((event: MessageEvent) => {
       if (event.origin !== window.location.origin) return;
       
-      if (event.data?.type === 'VIDEO_LOADED') {
-        onLoad();
-      } else if (event.data?.type === 'ERROR') {
-        onError(new Error(event.data.message));
-      } else if (event.data?.type === 'CONTENT_EVENT') {
-        onHealthEvent(event.data.event);
-      }
-    }, [onLoad, onError, onHealthEvent]);
+      const { type, event: healthEvent } = event.data || {};
 
+      if (type === 'CONTENT_EVENT') {
+        // Process health event
+        onHealthEvent({
+          ...healthEvent,
+          contentUrl: content.url, // Ensure correct URL
+          timestamp: Date.now(),
+          context: {
+            isActive: String(isActive),
+            duration: String(content.duration.value),
+            durationType: content.duration.type
+          }
+        });
+
+        // Signal load completion on first loaded event
+        if (healthEvent.type === 'CONTENT_LOADED' && !loadReported.current) {
+          loadReported.current = true;
+          onLoad();
+        }
+      }
+    }, [content, isActive, onLoad, onHealthEvent]);
+
+    // Handle errors
+    const handleError = useCallback((error: Error) => {
+      onError(error);
+      onHealthEvent({
+        type: 'CONTENT_ERROR',
+        contentUrl: content.url,
+        timestamp: Date.now(),
+        error: {
+          code: 'LOAD_ERROR',
+          message: error.message,
+          details: error
+        }
+      });
+    }, [content.url, onError, onHealthEvent]);
+
+    // Set up message listener
     useEffect(() => {
       window.addEventListener('message', handleMessage);
       return () => window.removeEventListener('message', handleMessage);
@@ -67,7 +98,10 @@ export const ContentFrame = forwardRef<HTMLIFrameElement, ContentFrameProps>(
         onHealthEvent({
           type: 'CONTENT_VISIBLE',
           contentUrl: content.url,
-          timestamp: Date.now()
+          timestamp: Date.now(),
+          context: {
+            displayTime: String(performance.now() - startTime.current)
+          }
         });
       } else {
         onHealthEvent({
@@ -77,6 +111,12 @@ export const ContentFrame = forwardRef<HTMLIFrameElement, ContentFrameProps>(
         });
       }
     }, [isActive, content.url, onHealthEvent]);
+
+    // Reset tracking on content change
+    useEffect(() => {
+      startTime.current = performance.now();
+      loadReported.current = false;
+    }, [content.url]);
 
     return (
       <iframe
