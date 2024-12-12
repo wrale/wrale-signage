@@ -12,17 +12,46 @@ import (
 	"github.com/wrale/wrale-signage/internal/wsignd/database"
 )
 
-// Session parameters for test database configuration
+// SessionParam represents a session parameter with its type for proper formatting
+type SessionParam struct {
+	Name  string
+	Value string
+	Type  ParamType
+}
+
+// ParamType indicates how a parameter should be formatted in SQL
+type ParamType int
+
 const (
-	// Strong serializable isolation by default in test environment
-	defaultTransactionIsolation = "SERIALIZABLE"
-	// Conservative statement timeout
-	defaultStatementTimeout = "5s"
-	// Reasonable lock timeout
-	defaultLockTimeout = "1s"
-	// Ensure clean transaction state
-	defaultIdleInTransaction = "1s"
+	// ParamTypeEnum for parameters that need single quotes
+	ParamTypeEnum ParamType = iota
+	// ParamTypeDuration for parameters that need millisecond conversion
+	ParamTypeDuration
 )
+
+// Session parameters for test database configuration
+var testSessionParams = []SessionParam{
+	{
+		Name:  "default_transaction_isolation",
+		Value: "serializable",
+		Type:  ParamTypeEnum,
+	},
+	{
+		Name:  "statement_timeout",
+		Value: "5s",
+		Type:  ParamTypeDuration,
+	},
+	{
+		Name:  "lock_timeout",
+		Value: "1s",
+		Type:  ParamTypeDuration,
+	},
+	{
+		Name:  "idle_in_transaction_session_timeout",
+		Value: "1s",
+		Type:  ParamTypeDuration,
+	},
+}
 
 // SetupTestDB creates a test database connection and ensures it's ready
 func SetupTestDB(t *testing.T) (*sql.DB, func()) {
@@ -84,29 +113,53 @@ func SetupTestDB(t *testing.T) (*sql.DB, func()) {
 	return db, cleanup
 }
 
+// formatParamValue formats a session parameter value according to its type
+func formatParamValue(param SessionParam) (string, error) {
+	switch param.Type {
+	case ParamTypeEnum:
+		// Enum values need single quotes
+		return fmt.Sprintf("'%s'", param.Value), nil
+
+	case ParamTypeDuration:
+		// Convert duration string to milliseconds
+		d, err := time.ParseDuration(param.Value)
+		if err != nil {
+			return "", fmt.Errorf("invalid duration %s: %w", param.Value, err)
+		}
+		return fmt.Sprintf("%d", d.Milliseconds()), nil
+
+	default:
+		return "", fmt.Errorf("unknown parameter type: %v", param.Type)
+	}
+}
+
 // configureTestSession sets up optimal PostgreSQL session parameters for testing
 func configureTestSession(t *testing.T, db *sql.DB) error {
 	t.Helper()
 
-	// Configure session parameters
-	params := map[string]string{
-		"default_transaction_isolation":       defaultTransactionIsolation,
-		"statement_timeout":                   defaultStatementTimeout,
-		"lock_timeout":                        defaultLockTimeout,
-		"idle_in_transaction_session_timeout": defaultIdleInTransaction,
-	}
-
-	// Apply each parameter
-	for param, value := range params {
-		_, err := db.Exec(fmt.Sprintf("SET SESSION %s = %s", param, value))
+	for _, param := range testSessionParams {
+		value, err := formatParamValue(param)
 		if err != nil {
-			return fmt.Errorf("failed to set %s: %w", param, err)
+			return fmt.Errorf("failed to format %s: %w", param.Name, err)
+		}
+
+		// Set session parameter
+		_, err = db.Exec(fmt.Sprintf("SET SESSION %s = %s", param.Name, value))
+		if err != nil {
+			return fmt.Errorf("failed to set %s: %w", param.Name, err)
 		}
 	}
 
-	// Log configuration for debugging
-	t.Logf("Configured test database session: isolation=%s, statement_timeout=%s, lock_timeout=%s",
-		defaultTransactionIsolation, defaultStatementTimeout, defaultLockTimeout)
+	// Verify configuration for debugging
+	for _, param := range testSessionParams {
+		var current string
+		err := db.QueryRow(fmt.Sprintf("SHOW %s", param.Name)).Scan(&current)
+		if err != nil {
+			t.Logf("Warning: failed to verify %s setting: %v", param.Name, err)
+			continue
+		}
+		t.Logf("Session parameter %s = %s", param.Name, current)
+	}
 
 	return nil
 }
