@@ -28,6 +28,14 @@ func (s *contentService) CreateContent(ctx context.Context, content *v1alpha1.Co
 		return err
 	}
 
+	if content.Spec.Type == "" {
+		content.Spec.Type = "static-page"
+	}
+
+	if content.Spec.Properties == nil {
+		content.Spec.Properties = make(map[string]string)
+	}
+
 	// Update status fields
 	content.Status.LastValidated = time.Now()
 	content.Status.IsHealthy = true
@@ -40,6 +48,14 @@ func (s *contentService) CreateContent(ctx context.Context, content *v1alpha1.Co
 func (s *contentService) UpdateContent(ctx context.Context, content *v1alpha1.ContentSource) error {
 	if err := content.Spec.Validate(); err != nil {
 		return err
+	}
+
+	if content.Spec.Type == "" {
+		content.Spec.Type = "static-page"
+	}
+
+	if content.Spec.Properties == nil {
+		content.Spec.Properties = make(map[string]string)
 	}
 
 	// Update status fields
