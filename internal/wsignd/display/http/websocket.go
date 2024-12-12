@@ -13,6 +13,7 @@ import (
 
 	v1alpha1 "github.com/wrale/wrale-signage/api/types/v1alpha1"
 	"github.com/wrale/wrale-signage/internal/wsignd/display"
+	"github.com/wrale/wrale-signage/internal/wsignd/ratelimit"
 )
 
 const (
@@ -27,6 +28,9 @@ const (
 
 	// Maximum message size allowed from peer
 	maxMessageSize = 512
+
+	// WebSocket-specific close codes
+	wsCloseRateLimitExceeded = 4429 // Custom code for rate limit
 )
 
 var upgrader = websocket.Upgrader{
@@ -45,6 +49,10 @@ type connection struct {
 	send      chan []byte
 	hub       *Hub
 	logger    *slog.Logger
+
+	// Rate limit tracking
+	readLimitKey  ratelimit.LimitKey
+	writeLimitKey ratelimit.LimitKey
 }
 
 // cleanup handles proper connection closure and cleanup
@@ -96,6 +104,24 @@ func (c *connection) readPump() {
 			break
 		}
 
+		// Check rate limit before processing
+		if err := c.hub.rateLimit.Allow(context.Background(), c.readLimitKey); err != nil {
+			c.logger.Warn("read rate limit exceeded",
+				"displayId", c.displayID,
+				"error", err,
+			)
+			// Send rate limit error to client
+			closeMsg := websocket.FormatCloseMessage(wsCloseRateLimitExceeded, "rate limit exceeded")
+			if err := c.write(websocket.CloseMessage, closeMsg); err != nil {
+				c.logger.Error("failed to send rate limit close message",
+					"error", err,
+					"displayId", c.displayID,
+				)
+			}
+			return
+		}
+
+		// Process message
 		var status v1alpha1.ControlMessage
 		if err := json.Unmarshal(message, &status); err != nil {
 			c.logger.Error("invalid status message",
@@ -153,6 +179,17 @@ func (c *connection) writePump() {
 				}
 				return
 			}
+
+			// Check rate limit before sending
+			if err := c.hub.rateLimit.Allow(context.Background(), c.writeLimitKey); err != nil {
+				c.logger.Warn("write rate limit exceeded",
+					"displayId", c.displayID,
+					"error", err,
+				)
+				// Drop message and continue
+				continue
+			}
+
 			if err := c.write(websocket.TextMessage, message); err != nil {
 				c.logger.Error("failed to write message",
 					"error", err,
@@ -160,6 +197,7 @@ func (c *connection) writePump() {
 				)
 				return
 			}
+
 		case <-ticker.C:
 			if err := c.write(websocket.PingMessage, []byte{}); err != nil {
 				c.logger.Error("failed to write ping",
@@ -186,16 +224,20 @@ type Hub struct {
 	// Inbound messages from the connections
 	broadcast chan []byte
 
+	// Rate limiting service
+	rateLimit ratelimit.Service
+
 	// Logger instance
 	logger *slog.Logger
 }
 
-func newHub(logger *slog.Logger) *Hub {
+func newHub(rateLimit ratelimit.Service, logger *slog.Logger) *Hub {
 	return &Hub{
 		broadcast:   make(chan []byte),
 		register:    make(chan *connection),
 		unregister:  make(chan *connection),
 		connections: make(map[*connection]bool),
+		rateLimit:   rateLimit,
 		logger:      logger,
 	}
 }
@@ -283,12 +325,24 @@ func (h *Handler) ServeWs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Create rate limit keys for this connection
+	readKey := ratelimit.LimitKey{
+		Type:  "ws_message_in",
+		Token: displayID.String(),
+	}
+	writeKey := ratelimit.LimitKey{
+		Type:  "ws_message_out",
+		Token: displayID.String(),
+	}
+
 	c := &connection{
-		displayID: displayID,
-		send:      make(chan []byte, 256),
-		ws:        ws,
-		hub:       h.hub,
-		logger:    h.logger,
+		displayID:     displayID,
+		send:          make(chan []byte, 256),
+		ws:            ws,
+		hub:           h.hub,
+		logger:        h.logger,
+		readLimitKey:  readKey,
+		writeLimitKey: writeKey,
 	}
 
 	c.hub.register <- c
