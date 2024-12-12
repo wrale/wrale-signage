@@ -7,6 +7,7 @@ export const ENDPOINTS = {
     // Device registration flow
     deviceCode: `${API_BASE}/displays/device/code`,
     activate: `${API_BASE}/displays/activate`,
+    refreshToken: `${API_BASE}/displays/token/refresh`,
     
     // Display management
     create: `${API_BASE}/displays`,

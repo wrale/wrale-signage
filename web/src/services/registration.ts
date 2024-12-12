@@ -26,22 +26,54 @@ export interface RegistrationResult {
 export class RegistrationService {
   private readonly auth: AuthService;
   private readonly tokenChangedUnsubscribe: (() => void) | null = null;
+  private isRegistered = false;
 
   constructor(
     private readonly config: DisplayConfig,
     private readonly onTokensChanged?: (tokens: AuthTokens | null) => void
   ) {
+    // Initialize auth service
     this.auth = new AuthService(config.displayId);
 
+    // Subscribe to token changes if callback provided
     if (onTokensChanged) {
-      this.tokenChangedUnsubscribe = this.auth.onTokensChanged(onTokensChanged);
+      this.tokenChangedUnsubscribe = this.auth.onTokensChanged(tokens => {
+        onTokensChanged(tokens);
+        
+        // Track registration state
+        if (tokens === null) {
+          this.isRegistered = false;
+        }
+      });
     }
+
+    // Check if already registered
+    const displayId = localStorage.getItem(`display-id-${config.displayId}`);
+    this.isRegistered = displayId !== null && this.auth.getAccessToken() !== null;
+  }
+
+  /**
+   * Check if display is registered and has valid tokens
+   */
+  async isValidRegistration(): Promise<boolean> {
+    if (!this.isRegistered) {
+      return false;
+    }
+
+    // Try to get a valid token
+    const token = await this.auth.getValidToken();
+    return token !== null;
   }
 
   /**
    * Start registration flow to get device code
    */
   async startRegistration(): Promise<RegistrationResponse> {
+    // Clear any existing registration
+    await this.auth.clearTokens();
+    localStorage.removeItem(`display-id-${this.config.displayId}`);
+    this.isRegistered = false;
+
     const response = await fetch(ENDPOINTS.displays.deviceCode, {
       method: 'POST',
       headers: {
@@ -64,7 +96,7 @@ export class RegistrationService {
   /**
    * Activate display using registration info
    */
-  async activate(deviceCode: string): Promise<void> {
+  private async activate(deviceCode: string): Promise<void> {
     const response = await fetch(ENDPOINTS.displays.activate, {
       method: 'POST',
       headers: {
@@ -91,6 +123,7 @@ export class RegistrationService {
 
     // Store auth tokens
     await this.auth.setTokens(result.auth);
+    this.isRegistered = true;
   }
 
   /**
@@ -118,10 +151,26 @@ export class RegistrationService {
   }
 
   /**
-   * Get current access token
+   * Get current access token or trigger registration
    */
-  getAccessToken(): string | null {
-    return this.auth.getAccessToken();
+  async getValidToken(): Promise<string> {
+    // Try to get valid token
+    const token = await this.auth.getValidToken();
+    if (token) {
+      return token;
+    }
+
+    // No valid token, need to register
+    const code = await this.startRegistration();
+    await this.pollForActivation(code.deviceCode, code.pollInterval);
+    
+    // Get fresh token after registration
+    const newToken = await this.auth.getValidToken();
+    if (!newToken) {
+      throw new Error('Failed to get valid token after registration');
+    }
+
+    return newToken;
   }
 
   /**

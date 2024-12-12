@@ -1,8 +1,8 @@
 import type { ControlMessage, ContentEvent, DisplayConfig } from '../types';
+import type { EventMap, EventHandler } from '../types/events';
 import { ENDPOINTS } from '../constants';
 import { DisplayEventManager } from './events';
 import { RegistrationService } from './registration';
-import { AuthService } from './auth';
 
 interface DisplayControlOptions {
   displayId: string;
@@ -19,11 +19,10 @@ export class DisplayControl {
   private ws: WebSocket | null = null;
   private events: DisplayEventManager;
   private registration: RegistrationService;
-  private auth: AuthService;
   private reconnectCount = 0;
   private reconnectTimer?: number;
   private messageQueue: ControlMessage[] = [];
-  private tokenUnsubscribe?: () => void;
+  private disposed = false;
   
   private readonly baseReconnectDelay: number;
   private readonly maxReconnectAttempts: number;
@@ -32,19 +31,7 @@ export class DisplayControl {
     private readonly options: DisplayControlOptions
   ) {
     this.events = new DisplayEventManager();
-    this.auth = new AuthService(options.displayId);
-    this.registration = new RegistrationService(
-      options.config,
-      null // Auth events handled directly
-    );
-
-    // Listen for token changes
-    this.tokenUnsubscribe = this.auth.onTokensChanged(tokens => {
-      if (!tokens) {
-        // Lost auth, need to reconnect
-        this.reconnect();
-      }
-    });
+    this.registration = new RegistrationService(options.config);
     
     this.baseReconnectDelay = options.reconnectInterval ?? 1000;
     this.maxReconnectAttempts = options.maxReconnectAttempts ?? 10;
@@ -54,70 +41,61 @@ export class DisplayControl {
    * Initialize WebSocket connection
    */
   async connect(): Promise<void> {
-    // Get valid token or start registration
-    const token = this.auth.getAccessToken();
-    if (!token) {
-      // Need to register first
-      const code = await this.registration.startRegistration();
-      
-      // Show activation screen until activated
-      this.events.emit('activation', code);
-      
-      try {
-        await this.registration.pollForActivation(
-          code.deviceCode,
-          code.pollInterval
-        );
-      } catch (err) {
-        throw new Error('Display activation failed');
-      }
+    if (this.disposed) {
+      throw new Error('DisplayControl has been disposed');
     }
 
     // Close existing connection if any
     if (this.ws) {
       this.ws.close();
+      this.ws = null;
     }
 
-    return new Promise((resolve, reject) => {
-      try {
-        // Get fresh token
-        const token = this.auth.getAccessToken();
-        if (!token) {
-          throw new Error('No valid auth token available');
+    try {
+      // Ensure we have a valid token
+      const token = await this.registration.getValidToken();
+      
+      // Build WebSocket URL with auth token
+      const url = new URL(ENDPOINTS.displays.ws, window.location.origin);
+      url.protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      url.searchParams.set('access_token', token);
+
+      return new Promise((resolve, reject) => {
+        try {
+          this.ws = new WebSocket(url.toString());
+          
+          this.ws.onopen = () => {
+            this.onConnected();
+            resolve();
+          };
+          
+          this.ws.onclose = (event) => {
+            // Check if closed due to auth failure
+            if (event.code === 4001) { // Custom code for auth failure
+              this.registration.startRegistration().catch(err => {
+                console.error('Failed to start registration:', err);
+              });
+            }
+            this.onDisconnected();
+          };
+
+          this.ws.onerror = (error) => this.onError(error);
+          this.ws.onmessage = (event) => this.onMessage(event);
+          
+        } catch (err) {
+          reject(err);
         }
+      });
 
-        // Build WebSocket URL
-        const url = new URL(ENDPOINTS.displays.ws, window.location.origin);
-        url.protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-
-        // Create connection with auth header
-        this.ws = new WebSocket(url.toString(), {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        });
-        
-        this.ws.onopen = () => {
-          this.onConnected();
-          resolve();
-        };
-        
-        this.ws.onclose = (event) => {
-          // Check if closed due to auth failure
-          if (event.code === 4001) { // Custom code for auth failure
-            this.auth.clearTokens().catch(err => {
-              console.error('Failed to clear invalid tokens:', err);
-            });
-          }
-          this.onDisconnected();
-        };
-
-        this.ws.onerror = (error) => this.onError(error);
-        this.ws.onmessage = (event) => this.onMessage(event);
-      } catch (err) {
-        reject(err);
-      }
-    });
+    } catch (err) {
+      // Registration/token error
+      this.events.emit('error', {
+        code: 'AUTH_ERROR',
+        message: 'Failed to get valid auth token',
+        details: err
+      });
+      throw err;
+    }
   }
 
   /**
@@ -171,10 +149,10 @@ export class DisplayControl {
     this.reconnectCount = 0;
     this.events.emit('reconnect', undefined);
     
-    // Update server status using auth interceptor
+    // Update server status using registration service
     const displayId = localStorage.getItem(`display-id-${this.options.displayId}`);
     if (displayId) {
-      const interceptor = this.auth.createFetchInterceptor();
+      const interceptor = this.registration.createFetchInterceptor();
       interceptor(ENDPOINTS.displays.lastSeen(displayId), {
         method: 'PUT',
         headers: {
@@ -246,6 +224,11 @@ export class DisplayControl {
       window.clearTimeout(this.reconnectTimer);
     }
 
+    // Don't reconnect if disposed
+    if (this.disposed) {
+      return;
+    }
+
     // Attempt reconnection if within limits
     if (this.reconnectCount < this.maxReconnectAttempts) {
       const delay = Math.min(
@@ -257,12 +240,6 @@ export class DisplayControl {
         this.reconnectCount++;
 
         try {
-          // Try to get a valid token before connecting
-          const token = await this.auth.getValidToken();
-          if (!token) {
-            throw new Error('No valid auth token available');
-          }
-
           await this.connect();
         } catch (err) {
           console.error('Reconnection failed:', err);
@@ -282,17 +259,14 @@ export class DisplayControl {
    * Clean up resources
    */
   dispose() {
+    this.disposed = true;
     if (this.ws) {
       this.ws.close();
     }
     if (this.reconnectTimer) {
       window.clearTimeout(this.reconnectTimer);
     }
-    if (this.tokenUnsubscribe) {
-      this.tokenUnsubscribe();
-    }
     this.events.dispose();
     this.registration.dispose();
-    this.auth.dispose();
   }
 }
