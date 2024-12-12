@@ -1,15 +1,27 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { ContentController } from './components/ContentController';
 import { RegistrationService } from './services/registration';
-import type { DisplayConfig } from './types';
+import type { DisplayConfig, RegistrationState } from './types';
+
+interface RegistrationHandle {
+  registration: RegistrationService;
+  currentState: RegistrationState;
+  abortController: AbortController;
+  registrationPromise: Promise<void> | null;
+}
 
 function App() {
   const params = new URLSearchParams(window.location.search);
   const displayId = params.get('id') || 'unregistered';
   const apiBase = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/api/v1alpha1`;
   
+  // UI state
   const [registrationCode, setRegistrationCode] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
+  
+  // Registration handle
+  const registrationRef = useRef<RegistrationHandle | null>(null);
 
   // Initial display configuration
   const config: DisplayConfig = {
@@ -30,38 +42,80 @@ function App() {
 
   // Handle device registration
   useEffect(() => {
-    const registration = new RegistrationService(config);
+    const initializeRegistration = async () => {
+      // Cleanup existing registration if any
+      if (registrationRef.current) {
+        registrationRef.current.abortController.abort();
+        registrationRef.current.registration.dispose();
+      }
 
-    const checkRegistration = async () => {
+      // Create new registration handle
+      const abortController = new AbortController();
+      const registration = new RegistrationService(config);
+
+      registrationRef.current = {
+        registration,
+        currentState: 'initializing',
+        abortController,
+        registrationPromise: null
+      };
+
       try {
         // Check if already registered
         if (await registration.isValidRegistration()) {
+          registrationRef.current.currentState = 'registered';
           setRegistrationCode(null);
           return;
         }
 
         // Start registration flow
+        registrationRef.current.currentState = 'registering';
         const response = await registration.startRegistration();
+        
+        // Show registration code to user
         setRegistrationCode(response.userCode);
-
+        
         // Start polling for activation
+        registrationRef.current.currentState = 'polling';
         await registration.pollForActivation(
-          response.deviceCode, 
+          response.deviceCode,
           response.pollInterval
         );
 
-        // Activation succeeded
+        // Registration complete
+        registrationRef.current.currentState = 'registered';
         setRegistrationCode(null);
+        setError(null);
+
       } catch (err) {
-        console.error('Registration error:', err);
-        setError(err instanceof Error ? err.message : 'Registration failed');
+        // Only update error state if registration wasn't aborted
+        if (!abortController.signal.aborted) {
+          console.error('Registration error:', err);
+          setError(err instanceof Error ? err.message : 'Registration failed');
+          registrationRef.current.currentState = 'error';
+        }
       }
     };
 
-    checkRegistration();
+    // Start registration
+    initializeRegistration();
 
-    return () => registration.dispose();
-  }, [config]);
+    // Cleanup function
+    return () => {
+      if (registrationRef.current) {
+        registrationRef.current.abortController.abort();
+        registrationRef.current.registration.dispose();
+        registrationRef.current = null;
+      }
+    };
+  }, [config, retryCount]); // Include retryCount to allow manual retries
+
+  // Handle retry button click
+  const handleRetry = () => {
+    setError(null);
+    setRegistrationCode(null);
+    setRetryCount(prev => prev + 1);
+  };
 
   // Show error if registration failed
   if (error) {
@@ -71,7 +125,7 @@ function App() {
         <p className="text-red-500">{error}</p>
         <button 
           className="mt-4 px-4 py-2 bg-blue-500 rounded hover:bg-blue-600"
-          onClick={() => window.location.reload()}
+          onClick={handleRetry}
         >
           Retry
         </button>

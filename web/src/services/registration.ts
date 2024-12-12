@@ -1,4 +1,10 @@
-import type { DisplayConfig } from '../types';
+import type { 
+  DisplayConfig, 
+  RegistrationResponse, 
+  RegistrationResult, 
+  RegistrationError,
+  RegistrationState
+} from '../types';
 import { ENDPOINTS } from '../constants';
 import { AuthService, AuthTokens } from './auth';
 
@@ -11,29 +17,6 @@ const DEFAULT_BACKOFF = {
   RATE_LIMIT_DELAY: 5000 // Initial delay after rate limit (5s)
 };
 
-export interface RegistrationResponse {
-  deviceCode: string;
-  userCode: string;
-  expiresIn: number;
-  pollInterval: number;
-  verificationUri: string;
-}
-
-export interface RegistrationResult {
-  display: {
-    id: string;
-    name: string;
-    [key: string]: unknown;
-  };
-  auth: AuthTokens;
-}
-
-interface RegistrationError extends Error {
-  code?: string;
-  isRateLimit?: boolean;
-  isAuthError?: boolean;
-}
-
 /**
  * Handles display registration flow including device activation and initial authentication.
  * Uses AuthService for token management after successful registration.
@@ -44,8 +27,12 @@ export class RegistrationService {
   
   // Registration state
   private isRegistered = false;
+  private registrationState: RegistrationState = 'initializing';
   private registrationLock: Promise<void> | null = null;
   private registrationAbortController: AbortController | null = null;
+
+  // Singleton instances for concurrent operations
+  private readonly pendingOperations = new Map<string, Promise<any>>();
 
   // Rate limiting state
   private lastDeviceCodeRequest = 0;
@@ -55,7 +42,8 @@ export class RegistrationService {
 
   constructor(
     private readonly config: DisplayConfig,
-    private readonly onTokensChanged?: (tokens: AuthTokens | null) => void
+    private readonly onTokensChanged?: (tokens: AuthTokens | null) => void,
+    private readonly onStateChanged?: (state: RegistrationState) => void
   ) {
     // Initialize auth service
     this.auth = new AuthService(config.displayId);
@@ -67,6 +55,7 @@ export class RegistrationService {
         
         // Track registration state
         if (tokens === null) {
+          this.updateState('initializing');
           this.isRegistered = false;
         }
       });
@@ -75,6 +64,21 @@ export class RegistrationService {
     // Check if already registered
     const displayId = localStorage.getItem(`display-id-${config.displayId}`);
     this.isRegistered = displayId !== null && this.auth.getAccessToken() !== null;
+    if (this.isRegistered) {
+      this.updateState('registered');
+    }
+  }
+
+  /**
+   * Get current registration state
+   */
+  getState(): RegistrationState {
+    return this.registrationState;
+  }
+
+  private updateState(state: RegistrationState) {
+    this.registrationState = state;
+    this.onStateChanged?.(state);
   }
 
   /**
@@ -91,264 +95,331 @@ export class RegistrationService {
   }
 
   /**
+   * Execute operation with concurrency control
+   */
+  private async executeOperation<T>(
+    key: string,
+    operation: () => Promise<T>
+  ): Promise<T> {
+    const pending = this.pendingOperations.get(key);
+    if (pending) {
+      return pending as Promise<T>;
+    }
+
+    const promise = operation().finally(() => {
+      if (this.pendingOperations.get(key) === promise) {
+        this.pendingOperations.delete(key);
+      }
+    });
+
+    this.pendingOperations.set(key, promise);
+    return promise;
+  }
+
+  /**
    * Start registration flow to get device code
    */
   async startRegistration(): Promise<RegistrationResponse> {
-    // Cancel any existing registration attempt
-    if (this.registrationAbortController) {
-      this.registrationAbortController.abort();
-      this.registrationAbortController = null;
-    }
-
-    // Create new abort controller
-    this.registrationAbortController = new AbortController();
-
-    // Apply rate limiting backoff
-    const now = Date.now();
-
-    // Special handling for rate limits
-    if (this.lastRateLimitTime > 0) {
-      const timeSinceRateLimit = now - this.lastRateLimitTime;
-      const rateDelay = Math.max(
-        DEFAULT_BACKOFF.RATE_LIMIT_DELAY * Math.pow(DEFAULT_BACKOFF.FACTOR, this.deviceCodeAttempts),
-        DEFAULT_BACKOFF.MIN_DELAY
-      );
-      
-      if (timeSinceRateLimit < rateDelay) {
-        throw this.createError('Rate limit cooldown in progress', { isRateLimit: true });
+    return this.executeOperation('deviceCode', async () => {
+      // Cancel any existing registration attempt
+      if (this.registrationAbortController) {
+        this.registrationAbortController.abort();
+        this.registrationAbortController = null;
       }
-    }
 
-    // Regular request backoff
-    const timeSinceLastRequest = now - this.lastDeviceCodeRequest;
-    if (timeSinceLastRequest < this.nextDeviceCodeDelay) {
-      const waitTime = this.nextDeviceCodeDelay - timeSinceLastRequest;
-      await new Promise(resolve => setTimeout(resolve, waitTime));
-    }
+      // Create new abort controller
+      this.registrationAbortController = new AbortController();
+      this.updateState('registering');
 
-    // Clear existing registration state
-    await this.auth.clearTokens();
-    localStorage.removeItem(`display-id-${this.config.displayId}`);
-    this.isRegistered = false;
+      // Apply rate limiting backoff
+      const now = Date.now();
 
-    try {
-      // Try to get device code with timeout
-      const response = await Promise.race([
-        fetch(ENDPOINTS.displays.deviceCode, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            displayId: this.config.displayId,
-            name: this.config.name,
-            location: this.config.location
-          }),
-          signal: this.registrationAbortController.signal
-        }),
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Request timeout')), 10000)
-        )
-      ]) as Response;
-
-      // Handle rate limiting
-      if (response.status === 429) {
-        this.lastRateLimitTime = now;
-        this.deviceCodeAttempts++;
+      // Special handling for rate limits
+      if (this.lastRateLimitTime > 0) {
+        const timeSinceRateLimit = now - this.lastRateLimitTime;
+        const rateDelay = Math.max(
+          DEFAULT_BACKOFF.RATE_LIMIT_DELAY * Math.pow(DEFAULT_BACKOFF.FACTOR, this.deviceCodeAttempts),
+          DEFAULT_BACKOFF.MIN_DELAY
+        );
         
-        if (this.deviceCodeAttempts >= DEFAULT_BACKOFF.MAX_ATTEMPTS) {
-          throw this.createError('Maximum registration attempts exceeded', { 
+        if (timeSinceRateLimit < rateDelay) {
+          throw this.createError('Rate limit cooldown in progress', { 
             isRateLimit: true,
-            code: 'MAX_ATTEMPTS'
+            retryable: true
+          });
+        }
+      }
+
+      // Regular request backoff
+      const timeSinceLastRequest = now - this.lastDeviceCodeRequest;
+      if (timeSinceLastRequest < this.nextDeviceCodeDelay) {
+        const waitTime = this.nextDeviceCodeDelay - timeSinceLastRequest;
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+      }
+
+      // Clear existing registration state
+      await this.auth.clearTokens();
+      localStorage.removeItem(`display-id-${this.config.displayId}`);
+      this.isRegistered = false;
+
+      try {
+        // Try to get device code with timeout
+        const response = await Promise.race([
+          fetch(ENDPOINTS.displays.deviceCode, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              displayId: this.config.displayId,
+              name: this.config.name,
+              location: this.config.location
+            }),
+            signal: this.registrationAbortController.signal
+          }),
+          new Promise<never>((_, reject) => 
+            setTimeout(() => reject(new Error('Request timeout')), 10000)
+          )
+        ]) as Response;
+
+        // Handle rate limiting
+        if (response.status === 429) {
+          this.lastRateLimitTime = now;
+          this.deviceCodeAttempts++;
+          
+          if (this.deviceCodeAttempts >= DEFAULT_BACKOFF.MAX_ATTEMPTS) {
+            throw this.createError('Maximum registration attempts exceeded', { 
+              isRateLimit: true,
+              code: 'MAX_ATTEMPTS',
+              retryable: false
+            });
+          }
+
+          throw this.createError('Rate limit exceeded', { 
+            isRateLimit: true,
+            retryable: true
           });
         }
 
-        throw this.createError('Rate limit exceeded', { isRateLimit: true });
-      }
+        // Handle other errors
+        if (!response.ok) {
+          throw this.createError(`Request failed: ${response.statusText}`, {
+            code: `HTTP_${response.status}`,
+            retryable: response.status >= 500
+          });
+        }
 
-      // Handle other errors
-      if (!response.ok) {
-        throw this.createError(`Request failed: ${response.statusText}`, {
-          code: `HTTP_${response.status}`
-        });
-      }
-
-      // Successful request
-      const result = await response.json();
-      
-      // Reset backoff on success
-      this.deviceCodeAttempts = 0;
-      this.nextDeviceCodeDelay = DEFAULT_BACKOFF.MIN_DELAY;
-      this.lastDeviceCodeRequest = now;
-      this.lastRateLimitTime = 0;
-
-      return result;
-
-    } catch (err) {
-      // Enhance error info
-      const error = err as RegistrationError;
-      
-      // Apply backoff for non-rate-limit errors
-      if (!error.isRateLimit) {
-        this.deviceCodeAttempts++;
-        this.nextDeviceCodeDelay = Math.min(
-          DEFAULT_BACKOFF.MAX_DELAY,
-          DEFAULT_BACKOFF.MIN_DELAY * Math.pow(DEFAULT_BACKOFF.FACTOR, this.deviceCodeAttempts)
-        );
+        // Successful request
+        const result = await response.json();
         
-        // Add jitter
-        const jitter = Math.random() * DEFAULT_BACKOFF.JITTER * this.nextDeviceCodeDelay;
-        this.nextDeviceCodeDelay += jitter;
-      }
+        // Reset backoff on success
+        this.deviceCodeAttempts = 0;
+        this.nextDeviceCodeDelay = DEFAULT_BACKOFF.MIN_DELAY;
+        this.lastDeviceCodeRequest = now;
+        this.lastRateLimitTime = 0;
 
-      throw error;
-    }
+        return result;
+
+      } catch (err) {
+        // Check for abort
+        if (this.registrationAbortController?.signal.aborted) {
+          throw this.createError('Registration cancelled', {
+            code: 'CANCELLED',
+            retryable: true
+          });
+        }
+
+        // Enhance error info
+        const error = err as RegistrationError;
+        
+        // Apply backoff for non-rate-limit errors
+        if (!error.isRateLimit) {
+          this.deviceCodeAttempts++;
+          this.nextDeviceCodeDelay = Math.min(
+            DEFAULT_BACKOFF.MAX_DELAY,
+            DEFAULT_BACKOFF.MIN_DELAY * Math.pow(DEFAULT_BACKOFF.FACTOR, this.deviceCodeAttempts)
+          );
+          
+          // Add jitter
+          const jitter = Math.random() * DEFAULT_BACKOFF.JITTER * this.nextDeviceCodeDelay;
+          this.nextDeviceCodeDelay += jitter;
+        }
+
+        this.updateState('error');
+        throw error;
+      }
+    });
   }
 
   /**
    * Activate display using registration info
    */
   private async activate(deviceCode: string): Promise<void> {
-    const response = await fetch(ENDPOINTS.displays.activate, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        activationCode: deviceCode,
-        name: this.config.name,
-        location: this.config.location
-      })
-    });
-
-    if (!response.ok) {
-      if (response.status === 404) {
-        throw this.createError('Invalid or expired activation code', {
-          code: 'INVALID_CODE',
-          isAuthError: true
-        });
-      } else if (response.status === 429) {
-        throw this.createError('Rate limit exceeded', { isRateLimit: true });
-      }
-      throw this.createError('Activation failed', {
-        code: `HTTP_${response.status}`
+    return this.executeOperation(`activate:${deviceCode}`, async () => {
+      const response = await fetch(ENDPOINTS.displays.activate, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          activationCode: deviceCode,
+          name: this.config.name,
+          location: this.config.location
+        })
       });
-    }
 
-    const result: RegistrationResult = await response.json();
+      if (!response.ok) {
+        if (response.status === 404) {
+          throw this.createError('Invalid or expired activation code', {
+            code: 'INVALID_CODE',
+            isAuthError: true,
+            retryable: false
+          });
+        } else if (response.status === 429) {
+          throw this.createError('Rate limit exceeded', { 
+            isRateLimit: true,
+            retryable: true
+          });
+        }
+        throw this.createError('Activation failed', {
+          code: `HTTP_${response.status}`,
+          retryable: response.status >= 500
+        });
+      }
 
-    // Store registered display ID
-    localStorage.setItem(`display-id-${this.config.displayId}`, result.display.id);
+      const result: RegistrationResult = await response.json();
 
-    // Store auth tokens
-    await this.auth.setTokens(result.auth);
-    this.isRegistered = true;
+      // Store registered display ID
+      localStorage.setItem(`display-id-${this.config.displayId}`, result.display.id);
+
+      // Store auth tokens
+      await this.auth.setTokens(result.auth);
+      this.isRegistered = true;
+      this.updateState('registered');
+    });
   }
 
   /**
    * Poll for successful activation
    */
   async pollForActivation(deviceCode: string, interval: number): Promise<void> {
-    let attempts = 0;
-    const maxAttempts = 180; // 15 minutes at 5-second intervals
-    let currentDelay = interval;
+    return this.executeOperation(`poll:${deviceCode}`, async () => {
+      let attempts = 0;
+      const maxAttempts = 180; // 15 minutes at 5-second intervals
+      let currentDelay = interval;
 
-    const controller = new AbortController();
-    this.registrationAbortController = controller;
+      const controller = new AbortController();
+      this.registrationAbortController = controller;
+      this.updateState('polling');
 
-    try {
-      while (attempts < maxAttempts && !controller.signal.aborted) {
-        try {
-          await this.activate(deviceCode);
-          return; // Success
-        } catch (err) {
-          const error = err as RegistrationError;
-          
-          // Don't retry auth errors
-          if (error.isAuthError) {
-            throw error;
+      try {
+        while (attempts < maxAttempts && !controller.signal.aborted) {
+          try {
+            await this.activate(deviceCode);
+            return;
+
+          } catch (err) {
+            const error = err as RegistrationError;
+            
+            // Don't retry auth errors
+            if (error.isAuthError || !error.retryable) {
+              this.updateState('error');
+              throw error;
+            }
+            
+            // Handle rate limits
+            if (error.isRateLimit) {
+              currentDelay = Math.min(
+                DEFAULT_BACKOFF.MAX_DELAY,
+                interval * Math.pow(DEFAULT_BACKOFF.FACTOR, attempts)
+              );
+              // Add jitter
+              const jitter = Math.random() * DEFAULT_BACKOFF.JITTER * currentDelay;
+              currentDelay += jitter;
+            }
+
+            attempts++;
+            if (attempts >= maxAttempts) {
+              throw this.createError('Activation polling timed out', {
+                code: 'POLLING_TIMEOUT',
+                retryable: true
+              });
+            }
+
+            // Wait before retry
+            await new Promise(resolve => setTimeout(resolve, currentDelay));
           }
-          
-          // Handle rate limits
-          if (error.isRateLimit) {
-            currentDelay = Math.min(
-              DEFAULT_BACKOFF.MAX_DELAY,
-              interval * Math.pow(DEFAULT_BACKOFF.FACTOR, attempts)
-            );
-            // Add jitter
-            const jitter = Math.random() * DEFAULT_BACKOFF.JITTER * currentDelay;
-            currentDelay += jitter;
-          }
+        }
 
-          attempts++;
-          if (attempts >= maxAttempts) {
-            throw this.createError('Activation polling timed out', {
-              code: 'POLLING_TIMEOUT'
-            });
-          }
+        if (controller.signal.aborted) {
+          throw this.createError('Activation cancelled', {
+            code: 'CANCELLED',
+            retryable: true
+          });
+        }
 
-          // Wait before retry
-          await new Promise(resolve => setTimeout(resolve, currentDelay));
+      } finally {
+        // Clear controller if it's still current
+        if (this.registrationAbortController === controller) {
+          this.registrationAbortController = null;
         }
       }
-
-      if (controller.signal.aborted) {
-        throw this.createError('Activation cancelled', {
-          code: 'CANCELLED'
-        });
-      }
-
-    } finally {
-      // Clear controller if it's still current
-      if (this.registrationAbortController === controller) {
-        this.registrationAbortController = null;
-      }
-    }
+    });
   }
 
   /**
    * Get current access token or trigger registration
    */
   async getValidToken(): Promise<string> {
-    // Try to get valid token
-    const token = await this.auth.getValidToken();
-    if (token) {
-      return token;
-    }
+    return this.executeOperation('token', async () => {
+      // Try to get valid token
+      const token = await this.auth.getValidToken();
+      if (token) {
+        return token;
+      }
 
-    // Only start one registration flow at a time
-    if (!this.registrationLock) {
-      this.registrationLock = (async () => {
-        try {
-          const code = await this.startRegistration();
-          await this.pollForActivation(code.deviceCode, code.pollInterval);
-        } finally {
-          this.registrationLock = null;
-        }
-      })();
-    }
+      // Only start one registration flow at a time
+      if (!this.registrationLock) {
+        this.registrationLock = (async () => {
+          try {
+            const code = await this.startRegistration();
+            await this.pollForActivation(
+              code.deviceCode,
+              code.pollInterval
+            );
+          } finally {
+            this.registrationLock = null;
+          }
+        })();
+      }
 
-    await this.registrationLock;
+      await this.registrationLock;
 
-    // Get fresh token after registration
-    const newToken = await this.auth.getValidToken();
-    if (!newToken) {
-      throw this.createError('Failed to get valid token after registration', {
-        code: 'TOKEN_ERROR'
-      });
-    }
+      // Get fresh token after registration
+      const newToken = await this.auth.getValidToken();
+      if (!newToken) {
+        throw this.createError('Failed to get valid token after registration', {
+          code: 'TOKEN_ERROR',
+          retryable: true
+        });
+      }
 
-    return newToken;
+      return newToken;
+    });
   }
 
   /**
    * Helper to create error with consistent format
    */
-  private createError(message: string, info: Partial<RegistrationError> = {}): RegistrationError {
+  private createError(
+    message: string, 
+    info: Partial<RegistrationError> = {}
+  ): RegistrationError {
     const error = new Error(message) as RegistrationError;
     error.code = info.code;
     error.isRateLimit = info.isRateLimit;
     error.isAuthError = info.isAuthError;
+    error.retryable = info.retryable ?? false;
     return error;
   }
 
@@ -367,6 +438,8 @@ export class RegistrationService {
       this.registrationAbortController.abort();
       this.registrationAbortController = null;
     }
+    // Clear any pending operations
+    this.pendingOperations.clear();
     this.auth.dispose();
   }
 }
