@@ -12,7 +12,6 @@ import (
 	"github.com/wrale/wrale-signage/internal/wsignd/auth"
 	"github.com/wrale/wrale-signage/internal/wsignd/display"
 	"github.com/wrale/wrale-signage/internal/wsignd/display/activation"
-	"github.com/wrale/wrale-signage/internal/wsignd/errors"
 	"github.com/wrale/wrale-signage/internal/wsignd/ratelimit"
 )
 
@@ -111,26 +110,6 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}, logger *slog.Lo
 		)
 		// Don't try to write the error since we already wrote headers
 	}
-}
-
-// writeError writes a JSON error response
-func (h *Handler) writeError(w http.ResponseWriter, err error, status int) {
-	var resp struct {
-		Error   string `json:"error"`
-		Code    string `json:"code,omitempty"`
-		Message string `json:"message,omitempty"`
-	}
-
-	// Convert to structured error if possible
-	if werr, ok := err.(*errors.Error); ok {
-		resp.Code = werr.Code()
-		resp.Message = werr.Message()
-		resp.Error = werr.Error()
-	} else {
-		resp.Error = err.Error()
-	}
-
-	writeJSON(w, status, resp, h.logger)
 }
 
 // healthCheck implements a basic health check
