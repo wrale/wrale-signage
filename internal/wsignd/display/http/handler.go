@@ -2,6 +2,8 @@ package http
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -32,7 +34,7 @@ func NewHandler(service display.Service, activation activation.Service, auth aut
 		rateLimit:  rateLimit,
 		logger:     logger,
 	}
-	h.hub = newHub(logger)
+	h.hub = newHub(h.rateLimit, logger)
 	go h.hub.run(context.Background()) // TODO: manage lifecycle with context
 	return h
 }

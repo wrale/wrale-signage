@@ -196,3 +196,18 @@ func (c *CommonRateLimits) DeviceCodeLimiter() func(http.Handler) http.Handler {
 		WaitOnLimit: false,
 	})
 }
+
+// WebSocketLimiter creates middleware for WebSocket connections
+func (c *CommonRateLimits) WebSocketLimiter() func(http.Handler) http.Handler {
+	return Middleware(c.service, c.logger, RateLimitOptions{
+		LimitType: "ws_connection",
+		GetToken: func(r *http.Request) string {
+			auth := r.Header.Get("Authorization")
+			if strings.HasPrefix(auth, "Bearer ") {
+				return auth[7:]
+			}
+			return ""
+		},
+		WaitOnLimit: false,
+	})
+}

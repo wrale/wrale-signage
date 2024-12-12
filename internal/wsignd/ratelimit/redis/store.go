@@ -38,11 +38,9 @@ func (s *Store) Increment(ctx context.Context, key ratelimit.LimitKey, limit rat
 
 	pipe := s.client.Pipeline()
 
-	// Get current value
+	// Get current value and increment
 	getCmd := pipe.Get(ctx, redisKey)
-
-	// Increment
-	incrCmd := pipe.Incr(ctx, redisKey)
+	pipe.Incr(ctx, redisKey)
 
 	// Set expiry if new key
 	pipe.Expire(ctx, redisKey, limit.Period)
