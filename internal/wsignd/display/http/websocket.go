@@ -251,9 +251,10 @@ func convert(s display.State) v1alpha1.DisplayState {
 
 // ServeWs handles websocket requests from displays
 func (h *Handler) ServeWs(w http.ResponseWriter, r *http.Request) {
-	displayID, err := uuid.Parse(r.URL.Query().Get("id"))
-	if err != nil {
-		http.Error(w, "missing or invalid display ID", http.StatusBadRequest)
+	// Get authenticated display ID from context (set by auth middleware)
+	displayID, ok := GetDisplayID(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
