@@ -1,9 +1,6 @@
 server:
   host: localhost
   port: 8080
-  readTimeout: 5s
-  writeTimeout: 10s
-  idleTimeout: 120s
 
 database:
   host: localhost
@@ -11,41 +8,26 @@ database:
   name: wrale_test
   user: postgres
   password: postgres
-  sslmode: disable
-  maxOpenConns: 25
-  maxIdleConns: 25
-  connMaxLifetime: 5m
+  
+redis:
+  host: localhost
+  port: 6379
+
+ratelimit:
+  settings:
+    max_wait_time: 2s
+  api: 
+    requests_per_minute: 120
+    burst_size: 30
+    device_code_per_interval: 10  # Increased from 3
+    device_code_interval: 1m      # Reduced from 5m
+    token_refresh_per_hour: 10 
+    refresh_burst_size: 3
+  websocket:
+    messages_per_minute: 60
+    burst_size: 15
 
 auth:
-  tokenExpiry: 1h
-  deviceCodeExpiry: 15m
-
-content:
-  storagePath: ./storage/content
-  maxCacheSize: 1073741824  # 1GB
-  defaultTTL: 1h
-
-rateLimit:
-  redis:
-    host: localhost
-    port: 6379
-    database: 0
-    password: ""
-  
-  api:
-    requestsPerMinute: 60
-    burstSize: 10
-    tokenRefreshPerHour: 5
-    refreshBurstSize: 2
-    deviceCodePerInterval: 3
-    deviceCodeInterval: 15m
-  
-  websocket:
-    messagesPerMinute: 600
-    burstSize: 100
-    enableWaiting: true
-  
-  settings:
-    enableWaiting: true
-    maxWaitTime: 5s
-    useClientIP: true
+  access_token_expiry: 1h
+  refresh_token_expiry: 90d
+  issuer: "wrale-signage-dev"
