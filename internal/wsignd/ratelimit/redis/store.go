@@ -11,6 +11,9 @@ import (
 	"github.com/wrale/wrale-signage/internal/wsignd/ratelimit"
 )
 
+// DefaultKeyExpiry is used for key lifetime management
+const DefaultKeyExpiry = 24 * time.Hour
+
 // Store implements rate limit storage using Redis
 type Store struct {
 	client *redis.Client
