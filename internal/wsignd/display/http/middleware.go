@@ -2,7 +2,10 @@ package http
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -71,6 +74,42 @@ func requestIDHeaderMiddleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// recoverMiddleware recovers from panics and returns JSON error responses
+func recoverMiddleware(logger *slog.Logger) func(next http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer func() {
+				if rvr := recover(); rvr != nil {
+					reqID := middleware.GetReqID(r.Context())
+					logger.Error("panic recovery",
+						"error", rvr,
+						"stack", string(debug.Stack()),
+						"path", r.URL.Path,
+						"requestId", reqID,
+					)
+
+					// Ensure clean headers
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusInternalServerError)
+
+					// Write JSON error response
+					err := json.NewEncoder(w).Encode(map[string]string{
+						"error": "internal error",
+					})
+					if err != nil {
+						logger.Error("failed to write error response",
+							"error", err,
+							"requestId", reqID,
+						)
+					}
+				}
+			}()
+
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 // authMiddleware validates bearer tokens and adds display ID to context
