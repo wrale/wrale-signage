@@ -20,8 +20,8 @@ func TestRouter(t *testing.T) {
 	handler, mockSvc := newTestHandler()
 
 	// Setup rate limit mocks
-	mockLimitSvc := handler.rateLimitService.(*mockRateLimitService)
-	mockLimitSvc.On("GetLimit", "api_request").Return(ratelimit.Limit{
+	mockLimitSvc := handler.rateLimit.(*mockRateLimitService)
+	mockLimitSvc.On("GetLimit", mock.AnythingOfType("string")).Return(ratelimit.Limit{
 		Rate:      100,
 		Period:    time.Minute,
 		BurstSize: 10,
@@ -55,7 +55,7 @@ func TestRouter(t *testing.T) {
 		{
 			name:          "device code request endpoint",
 			method:        http.MethodPost,
-			path:          "/api/v1alpha1/device/code",
+			path:          "/api/v1alpha1/displays/device/code",
 			auth:          false,
 			wantStatus:    http.StatusOK,
 			rateLimitType: "device_code",
@@ -63,41 +63,70 @@ func TestRouter(t *testing.T) {
 		{
 			name:          "device activation endpoint",
 			method:        http.MethodPost,
-			path:          "/api/v1alpha1/activate",
+			path:          "/api/v1alpha1/displays/activate",
 			body:          `{"code":"TEST123"}`,
 			auth:          false,
 			wantStatus:    http.StatusBadRequest, // Invalid code
-			rateLimitType: "api_request",
+			rateLimitType: "device_code",
+		},
+		{
+			name:          "token refresh endpoint",
+			method:        http.MethodPost,
+			path:          "/api/v1alpha1/displays/token/refresh",
+			body:          `{"refresh_token":"test"}`,
+			auth:          false,
+			wantStatus:    http.StatusBadRequest, // Invalid token
+			rateLimitType: "token_refresh",
 		},
 
 		// Protected endpoints (auth required)
 		{
-			name:       "display get endpoint - no auth",
+			name:          "display get endpoint - no auth",
+			method:        http.MethodGet,
+			path:          "/api/v1alpha1/displays/123",
+			auth:          false,
+			wantStatus:    http.StatusUnauthorized,
+			rateLimitType: "api_request",
+		},
+		{
+			name:          "display activate endpoint - no auth",
+			method:        http.MethodPut,
+			path:          "/api/v1alpha1/displays/123/activate",
+			auth:          false,
+			wantStatus:    http.StatusUnauthorized,
+			rateLimitType: "api_request",
+		},
+		{
+			name:          "display last seen endpoint - no auth",
+			method:        http.MethodPut,
+			path:          "/api/v1alpha1/displays/123/last-seen",
+			auth:          false,
+			wantStatus:    http.StatusUnauthorized,
+			rateLimitType: "api_request",
+		},
+		{
+			name:          "websocket endpoint - no auth",
+			method:        http.MethodGet,
+			path:          "/api/v1alpha1/displays/ws",
+			auth:          false,
+			wantStatus:    http.StatusUnauthorized,
+			rateLimitType: "websocket",
+		},
+
+		// Health check endpoints (bypass rate limits)
+		{
+			name:       "health check endpoint",
 			method:     http.MethodGet,
-			path:       "/api/v1alpha1/displays/123",
+			path:       "/api/v1alpha1/displays/healthz",
 			auth:       false,
-			wantStatus: http.StatusUnauthorized,
+			wantStatus: http.StatusOK,
 		},
 		{
-			name:       "display activate endpoint - no auth",
-			method:     http.MethodPut,
-			path:       "/api/v1alpha1/displays/123/activate",
-			auth:       false,
-			wantStatus: http.StatusUnauthorized,
-		},
-		{
-			name:       "display last seen endpoint - no auth",
-			method:     http.MethodPut,
-			path:       "/api/v1alpha1/displays/123/last-seen",
-			auth:       false,
-			wantStatus: http.StatusUnauthorized,
-		},
-		{
-			name:       "websocket endpoint - no auth",
+			name:       "readiness check endpoint",
 			method:     http.MethodGet,
-			path:       "/api/v1alpha1/displays/ws",
+			path:       "/api/v1alpha1/displays/readyz",
 			auth:       false,
-			wantStatus: http.StatusUnauthorized,
+			wantStatus: http.StatusOK,
 		},
 
 		// Invalid routes
@@ -151,8 +180,8 @@ func TestRouterMiddleware(t *testing.T) {
 	handler, mockSvc := newTestHandler()
 
 	// Setup rate limit mocks
-	mockLimitSvc := handler.rateLimitService.(*mockRateLimitService)
-	mockLimitSvc.On("GetLimit", "api_request").Return(ratelimit.Limit{
+	mockLimitSvc := handler.rateLimit.(*mockRateLimitService)
+	mockLimitSvc.On("GetLimit", mock.AnythingOfType("string")).Return(ratelimit.Limit{
 		Rate:      100,
 		Period:    time.Minute,
 		BurstSize: 10,
@@ -172,7 +201,7 @@ func TestRouterMiddleware(t *testing.T) {
 			name: "adds request id header",
 			test: func(t *testing.T) {
 				// Use public endpoint to avoid auth
-				req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/device/code", nil)
+				req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/displays/device/code", nil)
 				rec := httptest.NewRecorder()
 
 				router.ServeHTTP(rec, req)
@@ -184,11 +213,11 @@ func TestRouterMiddleware(t *testing.T) {
 			name: "recovers from panic",
 			test: func(t *testing.T) {
 				// Create a test handler that panics
-				router.HandleFunc("/api/v1alpha1/panic", func(w http.ResponseWriter, r *http.Request) {
+				router.HandleFunc("/api/v1alpha1/displays/panic", func(w http.ResponseWriter, r *http.Request) {
 					panic("test panic")
 				})
 
-				req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/panic", nil)
+				req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/displays/panic", nil)
 				rec := httptest.NewRecorder()
 
 				router.ServeHTTP(rec, req)
@@ -204,7 +233,7 @@ func TestRouterMiddleware(t *testing.T) {
 			test: func(t *testing.T) {
 				ctx, cancel := context.WithCancel(context.Background())
 				// Use public endpoint to avoid auth
-				req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/device/code", nil).WithContext(ctx)
+				req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/displays/device/code", nil).WithContext(ctx)
 				rec := httptest.NewRecorder()
 
 				// Cancel before request
