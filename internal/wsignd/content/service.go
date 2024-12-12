@@ -23,12 +23,20 @@ func NewService(repo Repository, processor EventProcessor, metrics MetricsAggreg
 	}
 }
 
+// setTypeMetaDefaults ensures TypeMeta fields are properly initialized
+func setTypeMetaDefaults(source *v1alpha1.ContentSource) {
+	source.TypeMeta = v1alpha1.TypeMeta{
+		APIVersion: "wrale.io/v1alpha1",
+		Kind:       "ContentSource",
+	}
+}
+
 func (s *contentService) CreateContent(ctx context.Context, content *v1alpha1.ContentSource) error {
-	// Set defaults before validation
+	// Set type metadata and defaults
+	setTypeMetaDefaults(content)
 	if content.Spec.Type == "" {
 		content.Spec.Type = "static-page"
 	}
-
 	if content.Spec.Properties == nil {
 		content.Spec.Properties = make(map[string]string)
 	}
@@ -47,11 +55,11 @@ func (s *contentService) CreateContent(ctx context.Context, content *v1alpha1.Co
 }
 
 func (s *contentService) UpdateContent(ctx context.Context, content *v1alpha1.ContentSource) error {
-	// Set defaults before validation
+	// Set type metadata and defaults
+	setTypeMetaDefaults(content)
 	if content.Spec.Type == "" {
 		content.Spec.Type = "static-page"
 	}
-
 	if content.Spec.Properties == nil {
 		content.Spec.Properties = make(map[string]string)
 	}
@@ -73,11 +81,27 @@ func (s *contentService) DeleteContent(ctx context.Context, name string) error {
 }
 
 func (s *contentService) GetContent(ctx context.Context, name string) (*v1alpha1.ContentSource, error) {
-	return s.repo.GetContent(ctx, name)
+	content, err := s.repo.GetContent(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+
+	setTypeMetaDefaults(content)
+	return content, nil
 }
 
 func (s *contentService) ListContent(ctx context.Context) ([]v1alpha1.ContentSource, error) {
-	return s.repo.ListContent(ctx)
+	contents, err := s.repo.ListContent(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Set TypeMeta for each content source
+	for i := range contents {
+		setTypeMetaDefaults(&contents[i])
+	}
+
+	return contents, nil
 }
 
 func (s *contentService) ReportEvents(ctx context.Context, batch EventBatch) error {
