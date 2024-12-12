@@ -1,9 +1,9 @@
 import type { ControlMessage, ContentEvent, DisplayConfig } from '../types';
+import { ENDPOINTS } from '../constants';
 import { DisplayEventManager } from './events';
 import { RegistrationService } from './registration';
 
 interface DisplayControlOptions {
-  url: string;
   displayId: string;
   config: DisplayConfig;
   reconnectInterval?: number;
@@ -47,18 +47,25 @@ export class DisplayControl {
    * Initialize WebSocket connection
    */
   async connect(): Promise<void> {
-    // Get access token first
-    const token = await this.registration.getAccessToken();
+    // Start registration if needed
+    const token = this.registration.getAccessToken();
     if (!token) {
-      // Start registration flow
-      const registration = await this.registration.startRegistration();
-      await this.registration.pollForToken(
-        registration.deviceCode,
-        registration.interval
-      );
+      const code = await this.registration.startRegistration();
+      
+      // Show activation screen until activated
+      this.events.emit('activation', code);
+      
+      try {
+        await this.registration.pollForActivation(
+          code.deviceCode,
+          code.pollInterval
+        );
+      } catch (err) {
+        throw new Error('Display activation failed');
+      }
     }
 
-    // Now connect with auth
+    // Now try WebSocket connection
     if (this.ws) {
       this.ws.close();
     }
@@ -66,8 +73,11 @@ export class DisplayControl {
     return new Promise((resolve, reject) => {
       try {
         const token = this.registration.getAccessToken();
-        const url = new URL(this.options.url);
-        url.searchParams.set('access_token', token || '');
+        const url = new URL(ENDPOINTS.displays.ws, window.location.origin);
+        url.protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        if (token) {
+          url.searchParams.set('access_token', token);
+        }
         
         this.ws = new WebSocket(url.toString());
         
@@ -136,13 +146,18 @@ export class DisplayControl {
     this.reconnectCount = 0;
     this.events.emit('reconnect', undefined);
     
-    // Send authentication
-    this.send({
-      type: 'STATUS_RESPONSE',
-      timestamp: new Date().toISOString(),
-      messageId: crypto.randomUUID(),
-      config: this.options.config
-    });
+    // Update server status
+    const displayId = localStorage.getItem(`display-id-${this.options.displayId}`);
+    if (displayId) {
+      fetch(ENDPOINTS.displays.lastSeen(displayId), {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      }).catch(err => {
+        console.error('Failed to update last seen:', err);
+      });
+    }
 
     // Process queued messages
     while (this.messageQueue.length > 0) {

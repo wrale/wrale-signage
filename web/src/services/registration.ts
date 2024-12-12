@@ -1,12 +1,12 @@
 import type { DisplayConfig } from '../types';
+import { ENDPOINTS } from '../constants';
 
 export interface RegistrationResponse {
   deviceCode: string;
   userCode: string;
-  verificationUri: string;
-  verificationUriComplete: string;
   expiresIn: number;
-  interval: number;
+  pollInterval: number;
+  verificationUri: string;
 }
 
 export interface TokenResponse {
@@ -15,22 +15,21 @@ export interface TokenResponse {
   expiresIn: number;
   refreshExpiresIn: number;
   tokenType: string;
-  deviceGuid: string;
+  displayId: string;
 }
 
 /**
- * Handles display registration and authentication using OAuth 2.0
- * Device Authorization Flow (RFC 8628)
+ * Handles display registration and authentication
  */
 export class RegistrationService {
-  private refreshTimer?: number;
   private tokens: TokenResponse | null = null;
+  private refreshTimer?: number;
 
   constructor(
     private readonly config: DisplayConfig,
     private readonly onTokensChanged?: (tokens: TokenResponse | null) => void
   ) {
-    // Restore tokens from localStorage if available
+    // Try to restore tokens from storage
     const stored = localStorage.getItem(`display-tokens-${config.displayId}`);
     if (stored) {
       try {
@@ -45,17 +44,18 @@ export class RegistrationService {
   }
 
   /**
-   * Start registration flow to get device and user codes
+   * Start registration flow to get device code
    */
   async startRegistration(): Promise<RegistrationResponse> {
-    const response = await fetch('/api/v1alpha1/auth/device/code', {
+    const response = await fetch(ENDPOINTS.displays.deviceCode, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/x-www-form-urlencoded'
+        'Content-Type': 'application/json'
       },
-      body: new URLSearchParams({
-        client_id: 'Wrale Signage_CLIENT',
-        scope: 'display'
+      body: JSON.stringify({
+        displayId: this.config.displayId,
+        name: this.config.name,
+        location: this.config.location
       })
     });
 
@@ -67,132 +67,89 @@ export class RegistrationService {
   }
 
   /**
-   * Poll for token after user enters code
+   * Activate display using registration info
    */
-  async pollForToken(deviceCode: string, interval: number): Promise<TokenResponse> {
-    while (true) {
-      try {
-        const response = await fetch('/api/v1alpha1/auth/device/token', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded'
-          },
-          body: new URLSearchParams({
-            grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
-            device_code: deviceCode,
-            client_id: 'Wrale Signage_CLIENT'
-          })
-        });
+  async activate(deviceCode: string): Promise<void> {
+    const response = await fetch(ENDPOINTS.displays.activate, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        activationCode: deviceCode,
+        name: this.config.name,
+        location: this.config.location
+      })
+    });
 
-        if (response.status === 428) {
-          // Not yet authorized, wait and retry
-          await new Promise(resolve => setTimeout(resolve, interval * 1000));
-          continue;
-        }
-
-        if (!response.ok) {
-          throw new Error('Token request failed');
-        }
-
-        const tokens = await response.json();
-        this.setTokens(tokens);
-        return tokens;
-
-      } catch (err) {
-        console.error('Error polling for token:', err);
-        await new Promise(resolve => setTimeout(resolve, interval * 1000));
+    if (!response.ok) {
+      if (response.status === 404) {
+        throw new Error('Invalid or expired activation code');
       }
+      throw new Error('Activation failed');
+    }
+
+    const result = await response.json();
+
+    // Store display ID from activation response
+    if (result.display?.id) {
+      localStorage.setItem(`display-id-${this.config.displayId}`, result.display.id);
     }
   }
 
   /**
-   * Get current access token, refreshing if needed
+   * Poll for successful activation
    */
-  async getAccessToken(): Promise<string | null> {
-    if (!this.tokens) {
-      return null;
+  async pollForActivation(deviceCode: string, interval: number): Promise<void> {
+    let attempts = 0;
+    const maxAttempts = 180; // 15 minutes at 5-second intervals
+
+    while (attempts < maxAttempts) {
+      try {
+        await this.activate(deviceCode);
+        return; // Success
+      } catch (err) {
+        if (err instanceof Error && err.message === 'Invalid or expired activation code') {
+          throw err; // Don't retry invalid codes
+        }
+        console.warn('Activation pending, will retry');
+        await new Promise(resolve => setTimeout(resolve, interval * 1000));
+        attempts++;
+      }
     }
 
-    // Check if token needs refresh
-    const expiryThreshold = 60; // Refresh 60 seconds before expiry
-    const now = Math.floor(Date.now() / 1000);
-    const tokenExpiry = now + this.tokens.expiresIn;
+    throw new Error('Activation timed out');
+  }
 
-    if (tokenExpiry - now <= expiryThreshold) {
-      await this.refreshTokens();
-    }
-
+  /**
+   * Get current access token
+   */
+  getAccessToken(): string | null {
     return this.tokens?.accessToken ?? null;
   }
 
-  /**
-   * Refresh tokens using refresh token
-   */
-  private async refreshTokens(): Promise<void> {
-    if (!this.tokens?.refreshToken) {
-      return;
-    }
-
-    try {
-      const response = await fetch('/api/v1alpha1/auth/token', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded'
-        },
-        body: new URLSearchParams({
-          grant_type: 'refresh_token',
-          refresh_token: this.tokens.refreshToken,
-          client_id: 'Wrale Signage_CLIENT'
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error('Token refresh failed');
-      }
-
-      const newTokens = await response.json();
-      this.setTokens(newTokens);
-
-    } catch (err) {
-      console.error('Error refreshing tokens:', err);
-      this.clearTokens();
-    }
-  }
-
-  private setTokens(tokens: TokenResponse | null): void {
-    this.tokens = tokens;
-    this.onTokensChanged?.(tokens);
-
-    if (tokens) {
-      localStorage.setItem(
-        `display-tokens-${this.config.displayId}`,
-        JSON.stringify(tokens)
-      );
-      this.scheduleRefresh();
-    } else {
-      localStorage.removeItem(`display-tokens-${this.config.displayId}`);
-      if (this.refreshTimer) {
-        window.clearTimeout(this.refreshTimer);
-      }
-    }
-  }
-
   private clearTokens(): void {
-    this.setTokens(null);
+    this.tokens = null;
+    this.onTokensChanged?.(null);
+
+    localStorage.removeItem(`display-tokens-${this.config.displayId}`);
+    if (this.refreshTimer) {
+      window.clearTimeout(this.refreshTimer);
+    }
   }
 
   private scheduleRefresh(): void {
-    if (!this.tokens) return;
+    // For now just clear tokens after expiry
+    // Token refresh will be implemented in the next phase
+    if (!this.tokens?.expiresIn) return;
 
     if (this.refreshTimer) {
       window.clearTimeout(this.refreshTimer);
     }
 
-    // Schedule refresh for 1 minute before expiry
-    const refreshIn = (this.tokens.expiresIn - 60) * 1000;
     this.refreshTimer = window.setTimeout(
-      () => this.refreshTokens(),
-      refreshIn
+      () => this.clearTokens(),
+      this.tokens.expiresIn * 1000
     );
   }
 
