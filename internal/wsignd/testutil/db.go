@@ -12,6 +12,18 @@ import (
 	"github.com/wrale/wrale-signage/internal/wsignd/database"
 )
 
+// Session parameters for test database configuration
+const (
+	// Strong serializable isolation by default in test environment
+	defaultTransactionIsolation = "SERIALIZABLE"
+	// Conservative statement timeout
+	defaultStatementTimeout = "5s"
+	// Reasonable lock timeout
+	defaultLockTimeout = "1s"
+	// Ensure clean transaction state
+	defaultIdleInTransaction = "1s"
+)
+
 // SetupTestDB creates a test database connection and ensures it's ready
 func SetupTestDB(t *testing.T) (*sql.DB, func()) {
 	t.Helper()
@@ -34,6 +46,10 @@ func SetupTestDB(t *testing.T) (*sql.DB, func()) {
 	// Connect to test database
 	testURL := fmt.Sprintf("postgres://postgres:postgres@localhost:5432/%s?sslmode=disable", dbName)
 	db, err := tryConnect(t, testURL)
+	require.NoError(t, err)
+
+	// Configure session parameters for test environment
+	err = configureTestSession(t, db)
 	require.NoError(t, err)
 
 	// Run migrations
@@ -66,6 +82,33 @@ func SetupTestDB(t *testing.T) (*sql.DB, func()) {
 	}
 
 	return db, cleanup
+}
+
+// configureTestSession sets up optimal PostgreSQL session parameters for testing
+func configureTestSession(t *testing.T, db *sql.DB) error {
+	t.Helper()
+
+	// Configure session parameters
+	params := map[string]string{
+		"default_transaction_isolation":       defaultTransactionIsolation,
+		"statement_timeout":                   defaultStatementTimeout,
+		"lock_timeout":                        defaultLockTimeout,
+		"idle_in_transaction_session_timeout": defaultIdleInTransaction,
+	}
+
+	// Apply each parameter
+	for param, value := range params {
+		_, err := db.Exec(fmt.Sprintf("SET SESSION %s = %s", param, value))
+		if err != nil {
+			return fmt.Errorf("failed to set %s: %w", param, err)
+		}
+	}
+
+	// Log configuration for debugging
+	t.Logf("Configured test database session: isolation=%s, statement_timeout=%s, lock_timeout=%s",
+		defaultTransactionIsolation, defaultStatementTimeout, defaultLockTimeout)
+
+	return nil
 }
 
 // tryConnect attempts to connect to database with retries
