@@ -20,63 +20,64 @@ func (r *repository) GetURLMetrics(ctx context.Context, url string, since time.T
 	}
 
 	err := database.RunInTx(ctx, r.db, &database.TxOptions{ReadOnly: true}, func(tx *database.Tx) error {
-		// Use CTEs for clear and efficient metric calculation
 		const query = `
-			WITH base_stats AS (
+			WITH load_events AS (
+				-- Get successful content load events with metrics
 				SELECT
-					COUNT(*) FILTER (WHERE type = 'CONTENT_LOADED') AS load_count,
-					COUNT(*) FILTER (WHERE type = 'CONTENT_ERROR') AS error_count,
-					MAX(EXTRACT(EPOCH FROM timestamp)) AS last_seen_ts
-				FROM content_events
-				WHERE url = $1 AND timestamp >= $2
-			),
-			performance_stats AS (
-				SELECT
-					COALESCE(AVG((metrics->>'loadTime')::float), 0) AS avg_load_time,
-					COALESCE(AVG((metrics->>'renderTime')::float), 0) AS avg_render_time
+					EXTRACT(EPOCH FROM timestamp) AS event_ts,
+					CASE
+						WHEN metrics IS NOT NULL AND jsonb_typeof(metrics->>'loadTime') = 'number'
+						THEN (metrics->>'loadTime')::float
+						ELSE NULL
+					END AS load_time,
+					CASE
+						WHEN metrics IS NOT NULL AND jsonb_typeof(metrics->>'renderTime') = 'number'
+						THEN (metrics->>'renderTime')::float
+						ELSE NULL
+					END AS render_time
 				FROM content_events
 				WHERE 
 					url = $1 
 					AND timestamp >= $2
 					AND type = 'CONTENT_LOADED'
-					AND metrics->>'loadTime' IS NOT NULL
 			),
-			error_stats AS (
+			error_events AS (
+				-- Calculate error rates by code
 				SELECT
-					error->>'code' AS error_code,
-					COUNT(*) AS code_count,
-					-- Calculate error rate against total number of loads and errors
-					ROUND(
-						COUNT(*) * 100.0 / NULLIF(
-							(SELECT load_count + error_count FROM base_stats),
-							0
-						),
-						2
-					) AS error_rate
+					COALESCE(error->>'code', 'UNKNOWN_ERROR') AS error_code,
+					COUNT(*) AS error_count
 				FROM content_events
 				WHERE 
 					url = $1 
 					AND timestamp >= $2
 					AND type = 'CONTENT_ERROR'
-					AND error->>'code' IS NOT NULL
+					AND error IS NOT NULL
 				GROUP BY error->>'code'
 			)
 			SELECT
-				b.load_count,
-				b.error_count,
-				b.last_seen_ts,
-				p.avg_load_time,
-				p.avg_render_time,
+				-- Base metrics
+				COUNT(DISTINCT le.event_ts) AS load_count,
+				COALESCE(SUM(ee.error_count), 0) AS error_count,
+				COALESCE(MAX(le.event_ts), EXTRACT(EPOCH FROM $2)) AS last_seen_ts,
+				
+				-- Performance metrics with safe averages
+				COALESCE(AVG(le.load_time) FILTER (WHERE le.load_time IS NOT NULL), 0) AS avg_load_time,
+				COALESCE(AVG(le.render_time) FILTER (WHERE le.render_time IS NOT NULL), 0) AS avg_render_time,
+				
+				-- Error rates as JSONB object
 				COALESCE(
 					jsonb_object_agg(
-						e.error_code,
-						e.error_rate
-					) FILTER (WHERE e.error_code IS NOT NULL),
+						ee.error_code,
+						ROUND(
+							CAST(ee.error_count AS float) * 100.0 / 
+							NULLIF(COUNT(DISTINCT le.event_ts) + SUM(ee.error_count), 0),
+							2
+						)
+					) FILTER (WHERE ee.error_code IS NOT NULL),
 					'{}'::jsonb
 				) AS error_rates
-			FROM base_stats b
-			CROSS JOIN performance_stats p
-			LEFT JOIN error_stats e ON true;
+			FROM load_events le
+			FULL OUTER JOIN error_events ee ON true;
 		`
 
 		var errorRatesJSON []byte
@@ -90,14 +91,15 @@ func (r *repository) GetURLMetrics(ctx context.Context, url string, since time.T
 		)
 
 		if err == sql.ErrNoRows {
-			// No events found, return empty metrics
+			// No events found - return empty metrics
+			metrics.LastSeen = int64(since.Unix())
 			return nil
 		}
 		if err != nil {
 			return err
 		}
 
-		// Parse error rates
+		// Parse error rates from JSONB
 		if len(errorRatesJSON) > 0 {
 			if err := json.Unmarshal(errorRatesJSON, &metrics.ErrorRates); err != nil {
 				return err
