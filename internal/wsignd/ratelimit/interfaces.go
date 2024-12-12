@@ -3,6 +3,8 @@ package ratelimit
 import (
 	"context"
 	"time"
+
+	"github.com/wrale/wrale-signage/internal/wsignd/config"
 )
 
 // LimitKey identifies a specific rate limit
@@ -36,6 +38,12 @@ type Service interface {
 
 	// Reset clears rate limit counters for a key
 	Reset(ctx context.Context, key LimitKey) error
+
+	// RegisterDefaultLimits configures standard rate limits
+	RegisterDefaultLimits()
+
+	// RegisterConfiguredLimits configures rate limits from config
+	RegisterConfiguredLimits(config.RateLimitConfig)
 }
 
 // Limit defines the rate limit configuration

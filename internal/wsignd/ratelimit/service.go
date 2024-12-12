@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/wrale/wrale-signage/internal/wsignd/config"
 )
 
 type service struct {
@@ -22,6 +24,41 @@ func NewService(store Store, logger *slog.Logger) Service {
 		logger: logger,
 		limits: make(map[string]Limit),
 	}
+}
+
+// RegisterConfiguredLimits sets up rate limits from configuration
+func (s *service) RegisterConfiguredLimits(cfg config.RateLimitConfig) {
+	// Token rate limits
+	s.RegisterLimit("token_refresh", Limit{
+		Rate:        cfg.API.TokenRefreshPerHour,
+		Period:      time.Hour,
+		BurstSize:   cfg.API.RefreshBurstSize,
+		WaitTimeout: 0, // No waiting for tokens
+	})
+
+	// API rate limits
+	s.RegisterLimit("api_request", Limit{
+		Rate:        cfg.API.RequestsPerMinute,
+		Period:      time.Minute,
+		BurstSize:   cfg.API.BurstSize,
+		WaitTimeout: cfg.Settings.MaxWaitTime,
+	})
+
+	// Device code limits
+	s.RegisterLimit("device_code", Limit{
+		Rate:        cfg.API.DeviceCodePerInterval,
+		Period:      cfg.API.DeviceCodeInterval,
+		BurstSize:   0, // No bursts for security
+		WaitTimeout: 0, // No waiting
+	})
+
+	// WebSocket limits
+	s.RegisterLimit("ws_connection", Limit{
+		Rate:        cfg.WebSocket.MessagesPerMinute,
+		Period:      time.Minute,
+		BurstSize:   cfg.WebSocket.BurstSize,
+		WaitTimeout: cfg.Settings.MaxWaitTime,
+	})
 }
 
 // RegisterLimit adds or updates a rate limit configuration
