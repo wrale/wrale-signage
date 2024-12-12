@@ -7,14 +7,15 @@ import type {
 } from '../types';
 import { ENDPOINTS } from '../constants';
 import { AuthService, AuthTokens } from './auth';
+import coordinator, { BackoffConfig } from './RateLimitCoordinator';
 
-const DEFAULT_BACKOFF = {
-  MIN_DELAY: 1000,      // 1 second
-  MAX_DELAY: 60000,     // 1 minute
-  FACTOR: 2,            // Double delay each try
-  JITTER: 0.1,         // Add 0-10% random jitter
-  MAX_ATTEMPTS: 5,      // Maximum attempts before requiring manual retry
-  RATE_LIMIT_DELAY: 5000 // Initial delay after rate limit (5s)
+const DEFAULT_BACKOFF: BackoffConfig = {
+  minDelay: 1000,      // 1 second
+  maxDelay: 60000,     // 1 minute
+  factor: 2,           // Double delay each try
+  jitter: 0.1,         // Add 0-10% random jitter
+  rateLimitDelay: 5000, // Initial delay after rate limit
+  maxAttempts: 5      // Maximum attempts before requiring manual retry
 };
 
 /**
@@ -33,12 +34,6 @@ export class RegistrationService {
 
   // Singleton instances for concurrent operations
   private readonly pendingOperations = new Map<string, Promise<any>>();
-
-  // Rate limiting state
-  private lastDeviceCodeRequest = 0;
-  private lastRateLimitTime = 0;
-  private deviceCodeAttempts = 0;
-  private nextDeviceCodeDelay = DEFAULT_BACKOFF.MIN_DELAY;
 
   constructor(
     private readonly config: DisplayConfig,
@@ -121,6 +116,18 @@ export class RegistrationService {
    */
   async startRegistration(): Promise<RegistrationResponse> {
     return this.executeOperation('deviceCode', async () => {
+      const endpoint = ENDPOINTS.displays.deviceCode;
+
+      // Check rate limiting through coordinator
+      if (await coordinator.shouldDelay(endpoint, DEFAULT_BACKOFF)) {
+        const delay = coordinator.getDelay(endpoint, DEFAULT_BACKOFF);
+        throw this.createError('Rate limit cooldown in progress', { 
+          isRateLimit: true,
+          retryable: true,
+          delay
+        });
+      }
+
       // Cancel any existing registration attempt
       if (this.registrationAbortController) {
         this.registrationAbortController.abort();
@@ -131,41 +138,18 @@ export class RegistrationService {
       this.registrationAbortController = new AbortController();
       this.updateState('registering');
 
-      // Apply rate limiting backoff
-      const now = Date.now();
-
-      // Special handling for rate limits
-      if (this.lastRateLimitTime > 0) {
-        const timeSinceRateLimit = now - this.lastRateLimitTime;
-        const rateDelay = Math.max(
-          DEFAULT_BACKOFF.RATE_LIMIT_DELAY * Math.pow(DEFAULT_BACKOFF.FACTOR, this.deviceCodeAttempts),
-          DEFAULT_BACKOFF.MIN_DELAY
-        );
-        
-        if (timeSinceRateLimit < rateDelay) {
-          throw this.createError('Rate limit cooldown in progress', { 
-            isRateLimit: true,
-            retryable: true
-          });
-        }
-      }
-
-      // Regular request backoff
-      const timeSinceLastRequest = now - this.lastDeviceCodeRequest;
-      if (timeSinceLastRequest < this.nextDeviceCodeDelay) {
-        const waitTime = this.nextDeviceCodeDelay - timeSinceLastRequest;
-        await new Promise(resolve => setTimeout(resolve, waitTime));
-      }
-
       // Clear existing registration state
       await this.auth.clearTokens();
       localStorage.removeItem(`display-id-${this.config.displayId}`);
       this.isRegistered = false;
 
       try {
+        // Record attempt
+        coordinator.recordAttempt(endpoint);
+
         // Try to get device code with timeout
         const response = await Promise.race([
-          fetch(ENDPOINTS.displays.deviceCode, {
+          fetch(endpoint, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json'
@@ -184,25 +168,19 @@ export class RegistrationService {
 
         // Handle rate limiting
         if (response.status === 429) {
-          this.lastRateLimitTime = now;
-          this.deviceCodeAttempts++;
+          coordinator.recordRateLimit(endpoint, DEFAULT_BACKOFF);
+          const delay = coordinator.getDelay(endpoint, DEFAULT_BACKOFF);
           
-          if (this.deviceCodeAttempts >= DEFAULT_BACKOFF.MAX_ATTEMPTS) {
-            throw this.createError('Maximum registration attempts exceeded', { 
-              isRateLimit: true,
-              code: 'MAX_ATTEMPTS',
-              retryable: false
-            });
-          }
-
           throw this.createError('Rate limit exceeded', { 
             isRateLimit: true,
-            retryable: true
+            retryable: true,
+            delay
           });
         }
 
         // Handle other errors
         if (!response.ok) {
+          coordinator.recordError(endpoint, DEFAULT_BACKOFF);
           throw this.createError(`Request failed: ${response.statusText}`, {
             code: `HTTP_${response.status}`,
             retryable: response.status >= 500
@@ -211,13 +189,7 @@ export class RegistrationService {
 
         // Successful request
         const result = await response.json();
-        
-        // Reset backoff on success
-        this.deviceCodeAttempts = 0;
-        this.nextDeviceCodeDelay = DEFAULT_BACKOFF.MIN_DELAY;
-        this.lastDeviceCodeRequest = now;
-        this.lastRateLimitTime = 0;
-
+        coordinator.recordSuccess(endpoint);
         return result;
 
       } catch (err) {
@@ -231,20 +203,6 @@ export class RegistrationService {
 
         // Enhance error info
         const error = err as RegistrationError;
-        
-        // Apply backoff for non-rate-limit errors
-        if (!error.isRateLimit) {
-          this.deviceCodeAttempts++;
-          this.nextDeviceCodeDelay = Math.min(
-            DEFAULT_BACKOFF.MAX_DELAY,
-            DEFAULT_BACKOFF.MIN_DELAY * Math.pow(DEFAULT_BACKOFF.FACTOR, this.deviceCodeAttempts)
-          );
-          
-          // Add jitter
-          const jitter = Math.random() * DEFAULT_BACKOFF.JITTER * this.nextDeviceCodeDelay;
-          this.nextDeviceCodeDelay += jitter;
-        }
-
         this.updateState('error');
         throw error;
       }
@@ -256,7 +214,22 @@ export class RegistrationService {
    */
   private async activate(deviceCode: string): Promise<void> {
     return this.executeOperation(`activate:${deviceCode}`, async () => {
-      const response = await fetch(ENDPOINTS.displays.activate, {
+      const endpoint = ENDPOINTS.displays.activate;
+
+      // Check rate limiting through coordinator
+      if (await coordinator.shouldDelay(endpoint, DEFAULT_BACKOFF)) {
+        const delay = coordinator.getDelay(endpoint, DEFAULT_BACKOFF);
+        throw this.createError('Rate limit cooldown in progress', { 
+          isRateLimit: true,
+          retryable: true,
+          delay
+        });
+      }
+
+      // Record attempt
+      coordinator.recordAttempt(endpoint);
+
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -276,11 +249,15 @@ export class RegistrationService {
             retryable: false
           });
         } else if (response.status === 429) {
+          coordinator.recordRateLimit(endpoint, DEFAULT_BACKOFF);
+          const delay = coordinator.getDelay(endpoint, DEFAULT_BACKOFF);
           throw this.createError('Rate limit exceeded', { 
             isRateLimit: true,
-            retryable: true
+            retryable: true,
+            delay
           });
         }
+        coordinator.recordError(endpoint, DEFAULT_BACKOFF);
         throw this.createError('Activation failed', {
           code: `HTTP_${response.status}`,
           retryable: response.status >= 500
@@ -296,6 +273,8 @@ export class RegistrationService {
       await this.auth.setTokens(result.auth);
       this.isRegistered = true;
       this.updateState('registered');
+
+      coordinator.recordSuccess(endpoint);
     });
   }
 
@@ -327,14 +306,16 @@ export class RegistrationService {
               throw error;
             }
             
-            // Handle rate limits
-            if (error.isRateLimit) {
+            // Use provided delay if rate limited
+            if (error.isRateLimit && error.delay) {
+              currentDelay = error.delay;
+            } else {
               currentDelay = Math.min(
-                DEFAULT_BACKOFF.MAX_DELAY,
-                interval * Math.pow(DEFAULT_BACKOFF.FACTOR, attempts)
+                DEFAULT_BACKOFF.maxDelay,
+                interval * Math.pow(DEFAULT_BACKOFF.factor, attempts)
               );
               // Add jitter
-              const jitter = Math.random() * DEFAULT_BACKOFF.JITTER * currentDelay;
+              const jitter = Math.random() * DEFAULT_BACKOFF.jitter * currentDelay;
               currentDelay += jitter;
             }
 
@@ -420,6 +401,7 @@ export class RegistrationService {
     error.isRateLimit = info.isRateLimit;
     error.isAuthError = info.isAuthError;
     error.retryable = info.retryable ?? false;
+    error.delay = info.delay;
     return error;
   }
 

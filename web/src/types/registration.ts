@@ -5,17 +5,12 @@ export type RegistrationState =
   | 'registered'
   | 'error';
 
-export type TokenState =
-  | 'valid'
-  | 'refreshing'
-  | 'expired'
-  | 'error';
-
 export interface RegistrationError extends Error {
   code?: string;
   isRateLimit?: boolean;
   isAuthError?: boolean;
   retryable?: boolean;
+  delay?: number;
 }
 
 export interface RegistrationResponse {
