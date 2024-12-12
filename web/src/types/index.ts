@@ -37,6 +37,7 @@ export interface ContentEvent {
   timestamp: number;
   error?: ContentError;
   metrics?: ContentMetrics;
+  mediaMetrics?: MediaMetrics;  // New field for media stats
   context?: Record<string, string>;
 }
 
@@ -45,7 +46,9 @@ export type ContentEventType =
   | 'CONTENT_ERROR'        // Error loading/rendering content
   | 'CONTENT_VISIBLE'      // Content became visible
   | 'CONTENT_HIDDEN'       // Content was hidden
-  | 'CONTENT_INTERACTIVE'; // Content ready for user interaction
+  | 'CONTENT_INTERACTIVE'  // Content ready for user interaction
+  | 'VIDEO_STATS'         // Video playback metrics
+  | 'IMAGE_STATS';        // Image display metrics
 
 export interface ContentError {
   code: string;           // Error classification
@@ -62,6 +65,66 @@ export interface ContentMetrics {
     scriptCount: number;  // Number of scripts loaded
     totalBytes: number;   // Total bytes transferred
   };
+  cpuTime?: number;      // CPU time used
+  memoryUsage?: {        // Memory stats if available
+    jsHeapSizeLimit: number;
+    totalJSHeapSize: number;
+    usedJSHeapSize: number;
+  };
+}
+
+// Media Monitoring Types
+export type MediaType = 'video' | 'image';
+
+export interface MediaMetrics {
+  type: MediaType;
+  video?: VideoMetrics;
+  image?: ImageMetrics;
+}
+
+export interface VideoMetrics {
+  // Playback quality
+  droppedFrames: number;
+  totalFrames: number;
+  fps: number;
+  resolution: {
+    width: number;
+    height: number;
+  };
+  
+  // Buffer health
+  bufferSize: number;      // in seconds
+  bufferFills: number;     // count of buffer depletions
+  stallEvents: number;     // count of playback stalls
+  stallDuration: number;   // total ms stalled
+  
+  // Performance
+  decodingTime: number;    // ms to start decode
+  playbackTime: number;    // ms to start playing
+  cpuTime?: number;        // if available
+  memoryUsage?: number;    // if available
+}
+
+export interface ImageMetrics {
+  // Load performance
+  decodeTime: number;      // Time to decode image
+  renderTime: number;      // Time to render image
+  
+  // Image properties
+  naturalSize: {
+    width: number;
+    height: number;
+  };
+  displaySize: {
+    width: number;
+    height: number;
+  };
+  
+  // Quality metrics
+  isProgressive: boolean;
+  compressionRatio?: number;
+  optimizationScore?: number;
+  scalingRatio: number;    // display size / natural size
 }
 
 // Display Status
@@ -72,6 +135,10 @@ export interface DisplayStatus {
   state: DisplayState;
   lastError?: ContentError;
   lastEvent?: ContentEvent;
+  mediaStatus?: {
+    videoPlaybackQuality?: Pick<VideoMetrics, 'fps' | 'stallEvents' | 'bufferSize'>;
+    imageQuality?: Pick<ImageMetrics, 'scalingRatio' | 'optimizationScore'>;
+  };
   updatedAt: string;
 }
 
