@@ -24,16 +24,17 @@ func NewService(repo Repository, processor EventProcessor, metrics MetricsAggreg
 }
 
 func (s *contentService) CreateContent(ctx context.Context, content *v1alpha1.ContentSource) error {
-	if err := content.Spec.Validate(); err != nil {
-		return err
-	}
-
+	// Set defaults before validation
 	if content.Spec.Type == "" {
 		content.Spec.Type = "static-page"
 	}
 
 	if content.Spec.Properties == nil {
 		content.Spec.Properties = make(map[string]string)
+	}
+
+	if err := content.Spec.Validate(); err != nil {
+		return err
 	}
 
 	// Update status fields
@@ -46,16 +47,17 @@ func (s *contentService) CreateContent(ctx context.Context, content *v1alpha1.Co
 }
 
 func (s *contentService) UpdateContent(ctx context.Context, content *v1alpha1.ContentSource) error {
-	if err := content.Spec.Validate(); err != nil {
-		return err
-	}
-
+	// Set defaults before validation
 	if content.Spec.Type == "" {
 		content.Spec.Type = "static-page"
 	}
 
 	if content.Spec.Properties == nil {
 		content.Spec.Properties = make(map[string]string)
+	}
+
+	if err := content.Spec.Validate(); err != nil {
+		return err
 	}
 
 	// Update status fields
