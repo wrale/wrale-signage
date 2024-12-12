@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/wrale/wrale-signage/internal/wsignd/content"
@@ -20,31 +21,53 @@ func (r *repository) GetURLMetrics(ctx context.Context, url string, since time.T
 	}
 
 	err := database.RunInTx(ctx, r.db, &database.TxOptions{ReadOnly: true}, func(tx *database.Tx) error {
-		// First get basic metrics
+		// First verify we have events for this URL
+		var eventCount int64
+		err := tx.QueryRowContext(ctx, `
+			SELECT COUNT(*) 
+			FROM content_events 
+			WHERE url = $1 AND timestamp >= $2
+		`, url, since).Scan(&eventCount)
+		if err != nil {
+			return fmt.Errorf("failed to check event existence: %w", err)
+		}
+
+		if eventCount == 0 {
+			metrics.LastSeen = since.Unix()
+			return nil
+		}
+
+		// Get basic metrics with enhanced error handling
 		const baseQuery = `
+			WITH event_metrics AS (
+				SELECT
+					COUNT(*) FILTER (WHERE type = 'CONTENT_LOADED') AS load_count,
+					COUNT(*) FILTER (WHERE type = 'CONTENT_ERROR') AS error_count,
+					MAX(timestamp) AS last_seen,
+					AVG(CASE 
+						WHEN type = 'CONTENT_LOADED' AND metrics->>'loadTime' IS NOT NULL 
+						THEN (metrics->>'loadTime')::float 
+						ELSE NULL 
+					END) AS avg_load_time,
+					AVG(CASE 
+						WHEN type = 'CONTENT_LOADED' AND metrics->>'renderTime' IS NOT NULL 
+						THEN (metrics->>'renderTime')::float 
+						ELSE NULL 
+					END) AS avg_render_time
+				FROM content_events
+				WHERE url = $1 AND timestamp >= $2
+			)
 			SELECT
-				COUNT(*) FILTER (WHERE type = 'CONTENT_LOADED') AS load_count,
-				COUNT(*) FILTER (WHERE type = 'CONTENT_ERROR') AS error_count,
-				COALESCE(MAX(EXTRACT(EPOCH FROM timestamp)), EXTRACT(EPOCH FROM $2)) AS last_seen_ts,
-				COALESCE(
-					AVG((metrics->>'loadTime')::float) FILTER (
-						WHERE type = 'CONTENT_LOADED' 
-						AND metrics->>'loadTime' IS NOT NULL
-					),
-					0
-				) AS avg_load_time,
-				COALESCE(
-					AVG((metrics->>'renderTime')::float) FILTER (
-						WHERE type = 'CONTENT_LOADED'
-						AND metrics->>'renderTime' IS NOT NULL
-					),
-					0
-				) AS avg_render_time
-			FROM content_events
-			WHERE url = $1 AND timestamp >= $2;
+				load_count,
+				error_count,
+				COALESCE(EXTRACT(EPOCH FROM last_seen), EXTRACT(EPOCH FROM $2)) as last_seen_ts,
+				COALESCE(avg_load_time, 0) as avg_load_time,
+				COALESCE(avg_render_time, 0) as avg_render_time
+			FROM event_metrics;
 		`
 
-		err := tx.QueryRowContext(ctx, baseQuery, url, since).Scan(
+		row := tx.QueryRowContext(ctx, baseQuery, url, since)
+		err = row.Scan(
 			&metrics.LoadCount,
 			&metrics.ErrorCount,
 			&metrics.LastSeen,
@@ -52,44 +75,47 @@ func (r *repository) GetURLMetrics(ctx context.Context, url string, since time.T
 			&metrics.AvgRenderTime,
 		)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to scan base metrics: %w", err)
 		}
 
-		// Then get error rates if we have any errors
+		// Get error rates only if we have errors
 		if metrics.ErrorCount > 0 {
-			const errorQuery = `
-				WITH total_events AS (
+			var errorRatesJSON []byte
+			err = tx.QueryRowContext(ctx, `
+				WITH error_stats AS (
 					SELECT
-						COUNT(*) AS total
+						error->>'code' as error_code,
+						COUNT(*) as error_count,
+						(SELECT COUNT(*) FROM content_events WHERE url = $1 AND timestamp >= $2) as total_events
 					FROM content_events
-					WHERE url = $1 AND timestamp >= $2
+					WHERE 
+						url = $1 
+						AND timestamp >= $2 
+						AND type = 'CONTENT_ERROR'
+						AND error->>'code' IS NOT NULL
+					GROUP BY error->>'code'
 				)
 				SELECT
 					COALESCE(
 						jsonb_object_agg(
-							error->>'code',
+							error_code,
 							ROUND(
-								COUNT(*)::float * 100.0 / NULLIF((SELECT total FROM total_events), 0),
+								(error_count::float * 100.0 / total_events::float)::numeric,
 								2
 							)::float
-						) FILTER (WHERE error->>'code' IS NOT NULL),
+						),
 						'{}'::jsonb
-					) AS error_rates
-				FROM content_events
-				WHERE 
-					url = $1 
-					AND timestamp >= $2 
-					AND type = 'CONTENT_ERROR';
-			`
+					) as error_rates
+				FROM error_stats;
+			`, url, since).Scan(&errorRatesJSON)
 
-			var errorRatesJSON []byte
-			if err := tx.QueryRowContext(ctx, errorQuery, url, since).Scan(&errorRatesJSON); err != nil {
-				return err
+			if err != nil && err != sql.ErrNoRows {
+				return fmt.Errorf("failed to scan error rates: %w", err)
 			}
 
 			if len(errorRatesJSON) > 0 {
 				if err := json.Unmarshal(errorRatesJSON, &metrics.ErrorRates); err != nil {
-					return err
+					return fmt.Errorf("failed to unmarshal error rates: %w", err)
 				}
 			}
 		}
@@ -98,11 +124,6 @@ func (r *repository) GetURLMetrics(ctx context.Context, url string, since time.T
 	})
 
 	if err != nil {
-		if err == sql.ErrNoRows {
-			// No events found - return empty metrics with since timestamp
-			metrics.LastSeen = int64(since.Unix())
-			return metrics, nil
-		}
 		return nil, database.MapError(err, op)
 	}
 
