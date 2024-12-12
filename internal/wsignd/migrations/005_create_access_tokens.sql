@@ -14,17 +14,20 @@ CREATE INDEX access_tokens_access_token_hash_idx ON access_tokens (access_token_
 CREATE INDEX access_tokens_refresh_token_hash_idx ON access_tokens (refresh_token_hash);
 CREATE INDEX access_tokens_expires_at_idx ON access_tokens (access_token_expires_at);
 
--- Create immutable function for current timestamp
-CREATE OR REPLACE FUNCTION current_timestamp_utc()
-RETURNS TIMESTAMPTZ
+-- Create immutable function for checking token expiry
+CREATE OR REPLACE FUNCTION is_token_active(expires_at TIMESTAMPTZ)
+RETURNS BOOLEAN
 AS $$
-  SELECT CURRENT_TIMESTAMP AT TIME ZONE 'UTC'
-$$ LANGUAGE SQL STABLE;
+BEGIN
+    -- Fixed point comparison using transaction timestamp
+    RETURN expires_at > CURRENT_TIMESTAMP AT TIME ZONE 'UTC';
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
 
 -- Add constraint to ensure only one active token set per display
 CREATE UNIQUE INDEX access_tokens_display_id_active_idx 
 ON access_tokens (display_id) 
-WHERE access_token_expires_at > current_timestamp_utc();
+WHERE is_token_active(access_token_expires_at);
 
 COMMENT ON TABLE access_tokens IS 'Stores OAuth tokens for authenticated displays';
 COMMENT ON COLUMN access_tokens.access_token_hash IS 'SHA-256 hash of access token';
