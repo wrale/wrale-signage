@@ -9,9 +9,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/wrale/wrale-signage/api/types/v1alpha1"
 	"github.com/wrale/wrale-signage/internal/wsignd/display"
+	"github.com/wrale/wrale-signage/internal/wsignd/display/activation"
 	"github.com/wrale/wrale-signage/internal/wsignd/ratelimit"
 )
 
@@ -27,6 +30,17 @@ func TestRouter(t *testing.T) {
 		BurstSize: 10,
 	})
 	mockLimitSvc.On("Allow", mock.Anything, mock.Anything).Return(nil)
+
+	// Setup activation service mocks
+	mockActSvc := handler.activation.(*mockActivationService)
+	mockActSvc.On("GenerateCode", mock.Anything).Return(&activation.DeviceCode{
+		DeviceCode:   "dev-code",
+		UserCode:     "user-code",
+		ExpiresAt:    time.Now().Add(15 * time.Minute),
+		PollInterval: 5,
+	}, nil)
+
+	mockActSvc.On("ActivateCode", mock.Anything, mock.AnythingOfType("string")).Return(uuid.Nil, activation.ErrCodeNotFound)
 
 	// Setup display service mocks
 	mockSvc.On("GetByName", mock.Anything, mock.AnythingOfType("string")).Return(nil, display.ErrNotFound{ID: "unknown"})
@@ -66,7 +80,7 @@ func TestRouter(t *testing.T) {
 			path:          "/api/v1alpha1/displays/activate",
 			body:          `{"code":"TEST123"}`,
 			auth:          false,
-			wantStatus:    http.StatusBadRequest, // Invalid code
+			wantStatus:    http.StatusNotFound, // Invalid code returns 404
 			rateLimitType: "device_code",
 		},
 		{
@@ -75,7 +89,7 @@ func TestRouter(t *testing.T) {
 			path:          "/api/v1alpha1/displays/token/refresh",
 			body:          `{"refresh_token":"test"}`,
 			auth:          false,
-			wantStatus:    http.StatusBadRequest, // Invalid token
+			wantStatus:    http.StatusUnauthorized, // Missing Authorization header
 			rateLimitType: "token_refresh",
 		},
 
@@ -120,6 +134,7 @@ func TestRouter(t *testing.T) {
 			path:       "/api/v1alpha1/displays/healthz",
 			auth:       false,
 			wantStatus: http.StatusOK,
+			// No rate limit type - health checks bypass limits
 		},
 		{
 			name:       "readiness check endpoint",
@@ -127,6 +142,7 @@ func TestRouter(t *testing.T) {
 			path:       "/api/v1alpha1/displays/readyz",
 			auth:       false,
 			wantStatus: http.StatusOK,
+			// No rate limit type - health checks bypass limits
 		},
 
 		// Invalid routes
@@ -177,7 +193,8 @@ func TestRouter(t *testing.T) {
 }
 
 func TestRouterMiddleware(t *testing.T) {
-	handler, mockSvc := newTestHandler()
+	handler, _ := newTestHandler()
+	mockActSvc := handler.activation.(*mockActivationService)
 
 	// Setup rate limit mocks
 	mockLimitSvc := handler.rateLimit.(*mockRateLimitService)
@@ -188,8 +205,13 @@ func TestRouterMiddleware(t *testing.T) {
 	})
 	mockLimitSvc.On("Allow", mock.Anything, mock.Anything).Return(nil)
 
-	// Setup display service mocks
-	mockSvc.On("GetByName", mock.Anything, mock.AnythingOfType("string")).Return(nil, display.ErrNotFound{ID: "unknown"})
+	// Setup activation service mocks
+	mockActSvc.On("GenerateCode", mock.Anything).Return(&activation.DeviceCode{
+		DeviceCode:   "dev-code",
+		UserCode:     "user-code",
+		ExpiresAt:    time.Now().Add(15 * time.Minute),
+		PollInterval: 5,
+	}, nil)
 
 	router := handler.Router()
 
@@ -200,19 +222,22 @@ func TestRouterMiddleware(t *testing.T) {
 		{
 			name: "adds request id header",
 			test: func(t *testing.T) {
-				// Use public endpoint to avoid auth
 				req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/displays/device/code", nil)
 				rec := httptest.NewRecorder()
 
 				router.ServeHTTP(rec, req)
 
 				assert.NotEmpty(t, rec.Header().Get("Request-ID"))
+				assert.Equal(t, http.StatusOK, rec.Code)
+
+				var resp v1alpha1.DeviceCodeResponse
+				assert.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+				assert.NotEmpty(t, resp.DeviceCode)
 			},
 		},
 		{
 			name: "recovers from panic",
 			test: func(t *testing.T) {
-				// Create a test handler that panics
 				router.HandleFunc("/api/v1alpha1/displays/panic", func(w http.ResponseWriter, r *http.Request) {
 					panic("test panic")
 				})
@@ -223,7 +248,8 @@ func TestRouterMiddleware(t *testing.T) {
 				router.ServeHTTP(rec, req)
 
 				assert.Equal(t, http.StatusInternalServerError, rec.Code)
-				var resp map[string]interface{}
+
+				var resp map[string]string
 				assert.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
 				assert.Equal(t, "internal error", resp["error"])
 			},
@@ -232,18 +258,16 @@ func TestRouterMiddleware(t *testing.T) {
 			name: "handles context cancellation",
 			test: func(t *testing.T) {
 				ctx, cancel := context.WithCancel(context.Background())
-				// Use public endpoint to avoid auth
 				req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/displays/device/code", nil).WithContext(ctx)
 				rec := httptest.NewRecorder()
 
-				// Cancel before request
 				cancel()
 
 				router.ServeHTTP(rec, req)
 
-				// Should return context canceled
 				assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
-				var resp map[string]interface{}
+
+				var resp map[string]string
 				assert.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
 				assert.Equal(t, "context canceled", resp["error"])
 			},
