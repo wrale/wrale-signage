@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,6 +18,13 @@ import (
 	"github.com/wrale/wrale-signage/internal/wsignd/display/activation"
 	"github.com/wrale/wrale-signage/internal/wsignd/ratelimit"
 )
+
+// testWriteJSON is a test helper that matches the production writeJSON behavior
+func testWriteJSON(w http.ResponseWriter, status int, v interface{}) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	return json.NewEncoder(w).Encode(v)
+}
 
 func TestRouter(t *testing.T) {
 	// Create handler with mock services
@@ -279,10 +287,12 @@ func TestRouterMiddleware(t *testing.T) {
 					select {
 					case <-r.Context().Done():
 						// Context canceled, write error response
-						w.WriteHeader(http.StatusServiceUnavailable)
-						json.NewEncoder(w).Encode(map[string]string{
+						err := testWriteJSON(w, http.StatusServiceUnavailable, map[string]string{
 							"error": "context canceled",
 						})
+						if err != nil {
+							t.Logf("failed to write JSON response: %v", err)
+						}
 					case <-time.After(time.Second):
 						// Should not reach here
 						t.Error("handler not canceled")
