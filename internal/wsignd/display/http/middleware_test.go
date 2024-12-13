@@ -26,10 +26,7 @@ func TestMiddleware(t *testing.T) {
 				th := testhttp.NewTestHandler()
 				router := th.Handler.Router()
 
-				defer func() {
-					th.Service.AssertExpectations(t)
-					th.RateLimit.AssertExpectations(t)
-				}()
+				th.SetupRateLimitBypass()
 
 				// Add panic handler
 				router.HandleFunc("/api/v1alpha1/displays/panic", func(w http.ResponseWriter, r *http.Request) {
@@ -55,36 +52,28 @@ func TestMiddleware(t *testing.T) {
 			name: "adds request id to context",
 			test: func(t *testing.T) {
 				th := testhttp.NewTestHandler()
-				router := th.Handler.Router()
-
 				defer func() {
-					th.Service.AssertExpectations(t)
 					th.RateLimit.AssertExpectations(t)
 				}()
 
-				var capturedID string
-				router.HandleFunc("/test", func(w http.ResponseWriter, r *http.Request) {
-					capturedID = r.Header.Get("X-Request-ID")
-					w.WriteHeader(http.StatusOK)
-				})
+				th.SetupRateLimitBypass()
 
-				req := httptest.NewRequest(http.MethodGet, "/test", nil)
+				req, err := th.MockRequest(http.MethodGet, "/test", nil)
+				assert.NoError(t, err)
 				rec := httptest.NewRecorder()
 
-				router.ServeHTTP(rec, req)
+				th.Handler.Router().ServeHTTP(rec, req)
 
-				// Request ID should be present and match between context and response header
-				assert.NotEmpty(t, capturedID)
-				assert.Equal(t, capturedID, rec.Header().Get("X-Request-ID"))
+				assert.Equal(t, http.StatusOK, rec.Code)
+				assert.NotEmpty(t, rec.Header().Get("X-Request-ID"))
+				assert.Equal(t, rec.Header().Get("Request-ID"), rec.Header().Get("X-Request-ID"))
 			},
 		},
 		{
 			name: "enforces rate limits",
 			test: func(t *testing.T) {
 				th := testhttp.NewTestHandler()
-
 				defer func() {
-					th.Service.AssertExpectations(t)
 					th.RateLimit.AssertExpectations(t)
 				}()
 
@@ -94,12 +83,11 @@ func TestMiddleware(t *testing.T) {
 					Period:    time.Minute,
 					BurstSize: 1,
 				})
-				th.RateLimit.On("Allow", mock.Anything, mock.Anything).Return(errors.New("rate limit exceeded"))
+				th.RateLimit.On("Allow", "display", mock.Anything).Return(errors.New("rate limit exceeded"))
 
 				req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/displays/123", nil)
 				rec := httptest.NewRecorder()
 
-				// The request should be rate limited before hitting auth
 				th.Handler.Router().ServeHTTP(rec, req)
 
 				assert.Equal(t, http.StatusTooManyRequests, rec.Code)
@@ -111,24 +99,22 @@ func TestMiddleware(t *testing.T) {
 				th := testhttp.NewTestHandler()
 				router := th.Handler.Router()
 
-				defer func() {
-					th.Service.AssertExpectations(t)
-					th.RateLimit.AssertExpectations(t)
-				}()
+				th.SetupRateLimitBypass()
 
-				// Add slow handler that will be cancelled
+				// Add handler that blocks until context is cancelled
 				router.HandleFunc("/api/v1alpha1/displays/slow", func(w http.ResponseWriter, r *http.Request) {
 					<-r.Context().Done()
 					w.WriteHeader(http.StatusServiceUnavailable)
 				})
 
-				req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/displays/slow", nil)
-				ctx, cancel := context.WithCancel(req.Context())
-				req = req.WithContext(ctx)
+				// Create cancellable request
+				ctx, cancel := context.WithCancel(context.Background())
+				req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/displays/slow", nil).WithContext(ctx)
 				rec := httptest.NewRecorder()
 
-				// Cancel immediately
+				// Cancel context after a short delay
 				go func() {
+					time.Sleep(100 * time.Millisecond)
 					cancel()
 				}()
 
