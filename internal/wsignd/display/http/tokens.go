@@ -27,9 +27,7 @@ func (h *Handler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Remove "Bearer " prefix if present
-	if strings.HasPrefix(refreshToken, "Bearer ") {
-		refreshToken = refreshToken[7:]
-	}
+	refreshToken = strings.TrimPrefix(refreshToken, "Bearer ")
 
 	// Generate new token pair
 	token, err := h.auth.RefreshToken(r.Context(), refreshToken)
