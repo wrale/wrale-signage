@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	testhttp "github.com/wrale/wrale-signage/internal/wsignd/display/http/testing"
 	"github.com/wrale/wrale-signage/internal/wsignd/ratelimit"
 )
@@ -86,27 +87,36 @@ func TestMiddleware(t *testing.T) {
 					Rate:      1,
 					Period:    time.Minute,
 					BurstSize: 1,
-				})
+				}).Once()
 
-				// Expect rate limit check with proper key
+				// Expect rate limit check with proper key and return exceeded error
 				th.RateLimit.On("Allow", mock.Anything, mock.MatchedBy(func(key ratelimit.LimitKey) bool {
 					return key.Type == "api_request" && key.RemoteIP != ""
-				})).Return(ratelimit.ErrLimitExceeded)
+				})).Return(ratelimit.ErrLimitExceeded).Once()
 
 				req, err := th.MockRequest(http.MethodGet, "/api/v1alpha1/displays/123", nil)
-				assert.NoError(t, err)
-				rec := httptest.NewRecorder()
+				require.NoError(t, err)
 
+				rec := httptest.NewRecorder()
 				th.Handler.Router().ServeHTTP(rec, req)
 
+				// Verify response code
 				assert.Equal(t, http.StatusTooManyRequests, rec.Code)
 
 				// Verify JSON response
 				var respBody map[string]interface{}
 				err = json.NewDecoder(rec.Body).Decode(&respBody)
-				assert.NoError(t, err)
-				assert.Contains(t, respBody, "error")
-				assert.Contains(t, respBody["error"], "rate limit")
+				require.NoError(t, err, "response should contain valid JSON")
+
+				// Check error message
+				assert.Contains(t, respBody, "error", "response should contain error field")
+				errorMsg, ok := respBody["error"].(string)
+				assert.True(t, ok, "error should be a string")
+				assert.Contains(t, errorMsg, "rate limit", "error should mention rate limit")
+
+				// Verify headers
+				assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+				assert.NotEmpty(t, rec.Header().Get("Request-Id"))
 			},
 		},
 		{

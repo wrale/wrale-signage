@@ -55,12 +55,21 @@ func TestRequestDeviceCode(t *testing.T) {
 func TestActivateDeviceCode(t *testing.T) {
 	tests := []struct {
 		name        string
-		setupMocks  func(*testhttp.TestHandler, uuid.UUID)
 		requestBody string
+		setupMocks  func(*testhttp.TestHandler, uuid.UUID)
 		wantStatus  int
 	}{
 		{
 			name: "successful activation",
+			requestBody: `{
+				"activation_code": "TEST123",
+				"name": "test-display",
+				"location": {
+					"site_id": "test-site",
+					"zone": "test-zone",
+					"position": "main"
+				}
+			}`,
 			setupMocks: func(th *testhttp.TestHandler, testID uuid.UUID) {
 				// Setup successful registration
 				th.Service.On("Register",
@@ -80,32 +89,32 @@ func TestActivateDeviceCode(t *testing.T) {
 						Position: "main",
 					},
 					State: display.StateUnregistered,
-				}, nil)
+				}, nil).Once()
 
 				// Setup successful activation
 				th.Activation.On("ActivateCode",
 					mock.Anything,
 					"TEST123",
-					mock.MatchedBy(func(id uuid.UUID) bool {
-						return id == testID
-					}),
-				).Return(nil)
+					testID,
+				).Return(nil).Once()
 
 				// Setup token creation
 				th.Auth.On("CreateToken",
 					mock.Anything,
-					mock.MatchedBy(func(id uuid.UUID) bool {
-						return id == testID
-					}),
+					testID,
 				).Return(&auth.Token{
 					AccessToken:        "access-token",
 					RefreshToken:       "refresh-token",
 					AccessTokenExpiry:  time.Now().Add(time.Hour),
 					RefreshTokenExpiry: time.Now().Add(24 * time.Hour),
-				}, nil)
+				}, nil).Once()
 			},
+			wantStatus: http.StatusOK,
+		},
+		{
+			name: "invalid activation code",
 			requestBody: `{
-				"activation_code": "TEST123",
+				"activation_code": "INVALID",
 				"name": "test-display",
 				"location": {
 					"site_id": "test-site",
@@ -113,10 +122,6 @@ func TestActivateDeviceCode(t *testing.T) {
 					"position": "main"
 				}
 			}`,
-			wantStatus: http.StatusOK,
-		},
-		{
-			name: "invalid activation code",
 			setupMocks: func(th *testhttp.TestHandler, testID uuid.UUID) {
 				// Registration succeeds
 				th.Service.On("Register",
@@ -136,32 +141,21 @@ func TestActivateDeviceCode(t *testing.T) {
 						Position: "main",
 					},
 					State: display.StateUnregistered,
-				}, nil)
+				}, nil).Once()
 
 				// But activation fails with not found
 				th.Activation.On("ActivateCode",
 					mock.Anything,
 					"INVALID",
-					mock.MatchedBy(func(id uuid.UUID) bool {
-						return id == testID
-					}),
-				).Return(activation.ErrCodeNotFound)
+					testID,
+				).Return(activation.ErrCodeNotFound).Once()
 			},
-			requestBody: `{
-				"activation_code": "INVALID",
-				"name": "test-display",
-				"location": {
-					"site_id": "test-site",
-					"zone": "test-zone",
-					"position": "main"
-				}
-			}`,
 			wantStatus: http.StatusNotFound,
 		},
 		{
 			name:        "invalid request body",
-			setupMocks:  func(th *testhttp.TestHandler, testID uuid.UUID) {},
 			requestBody: `{invalid json`,
+			setupMocks:  func(th *testhttp.TestHandler, testID uuid.UUID) {},
 			wantStatus:  http.StatusBadRequest,
 		},
 	}
@@ -170,8 +164,6 @@ func TestActivateDeviceCode(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			th := testhttp.NewTestHandler(t)
 			testID := uuid.New()
-
-			defer th.CleanupTest()
 
 			// Setup rate limiting bypass
 			th.SetupRateLimitBypass()
@@ -187,21 +179,28 @@ func TestActivateDeviceCode(t *testing.T) {
 
 			th.Handler.Router().ServeHTTP(rec, req)
 
+			// Assert status code first
 			assert.Equal(t, tt.wantStatus, rec.Code)
 
-			// Verify JSON response format if needed
+			// Verify JSON response format
+			var respBody map[string]interface{}
+			err = json.NewDecoder(rec.Body).Decode(&respBody)
+			assert.NoError(t, err)
+
 			if tt.wantStatus != http.StatusOK {
-				var respBody map[string]interface{}
-				err = json.NewDecoder(rec.Body).Decode(&respBody)
-				assert.NoError(t, err)
 				assert.Contains(t, respBody, "error")
 			} else {
-				var respBody map[string]interface{}
-				err = json.NewDecoder(rec.Body).Decode(&respBody)
-				assert.NoError(t, err)
-				assert.Contains(t, respBody, "access_token")
-				assert.Contains(t, respBody, "refresh_token")
+				assert.Contains(t, respBody, "display", "Response should contain display info")
+				assert.Contains(t, respBody, "auth", "Response should contain auth info")
+
+				auth, ok := respBody["auth"].(map[string]interface{})
+				assert.True(t, ok, "Auth should be a map")
+				assert.Contains(t, auth, "access_token")
+				assert.Contains(t, auth, "refresh_token")
 			}
+
+			// Verify all mock expectations were met
+			th.CleanupTest()
 		})
 	}
 }

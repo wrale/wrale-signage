@@ -7,7 +7,9 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"github.com/wrale/wrale-signage/internal/wsignd/display"
 	testhttp "github.com/wrale/wrale-signage/internal/wsignd/display/http/testing"
 )
 
@@ -20,6 +22,7 @@ func TestStatusEndpoints(t *testing.T) {
 		wantBody       map[string]interface{}
 		setupAuth      bool
 		setupRateLimit bool
+		setupMocks     func(*testhttp.TestHandler)
 	}{
 		{
 			name:       "health check endpoint",
@@ -30,6 +33,7 @@ func TestStatusEndpoints(t *testing.T) {
 				"status": "ok",
 			},
 			setupRateLimit: true,
+			setupMocks:     func(th *testhttp.TestHandler) {},
 		},
 		{
 			name:       "readiness check endpoint",
@@ -40,6 +44,7 @@ func TestStatusEndpoints(t *testing.T) {
 				"status": "ok",
 			},
 			setupRateLimit: true,
+			setupMocks:     func(th *testhttp.TestHandler) {},
 		},
 		{
 			name:       "non-existent endpoint",
@@ -51,6 +56,10 @@ func TestStatusEndpoints(t *testing.T) {
 			},
 			setupAuth:      true,
 			setupRateLimit: true,
+			setupMocks: func(th *testhttp.TestHandler) {
+				th.Service.On("GetByName", mock.Anything, "invalid").
+					Return(nil, display.ErrNotFound{ID: "invalid"}).Once()
+			},
 		},
 	}
 
@@ -69,6 +78,9 @@ func TestStatusEndpoints(t *testing.T) {
 			if tt.setupAuth {
 				th.SetupAuthBypass()
 			}
+
+			// Set up any additional mock expectations
+			tt.setupMocks(th)
 
 			// Create request
 			var req *http.Request
