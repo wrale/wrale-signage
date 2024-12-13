@@ -16,6 +16,14 @@ import (
 	"github.com/wrale/wrale-signage/internal/wsignd/ratelimit"
 )
 
+// Common rate limit types from handler configuration
+const (
+	apiRequestLimit   = "api_request"
+	deviceCodeLimit   = "device_code"
+	tokenRefreshLimit = "token_refresh"
+	wsConnectionLimit = "ws_connection"
+)
+
 // TestHandler provides access to handler and mocks for testing
 type TestHandler struct {
 	Handler    *displayhttp.Handler
@@ -23,6 +31,7 @@ type TestHandler struct {
 	Activation *mocks.ActivationService
 	Auth       *mocks.AuthService
 	RateLimit  *mocks.RateLimitService
+	logger     *slog.Logger
 }
 
 // NewTestHandler creates a new handler with mock services for testing
@@ -47,6 +56,7 @@ func NewTestHandler() *TestHandler {
 		Activation: mockActSvc,
 		Auth:       mockAuthSvc,
 		RateLimit:  mockRateLimitSvc,
+		logger:     logger,
 	}
 }
 
@@ -69,6 +79,12 @@ func (th *TestHandler) MockRequest(method, target string, body interface{}) (*ht
 	}
 	if err != nil {
 		return nil, err
+	}
+
+	// Add required headers
+	req.Header.Set("X-Real-IP", "192.0.2.1:1234")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 
 	// Add chi routing context
@@ -109,15 +125,38 @@ func (th *TestHandler) SetupRateLimitBypass() {
 		BurstSize: 10,
 	}
 
-	// Setup limit configs
-	th.RateLimit.On("GetLimit", "api").Return(limit)
-	th.RateLimit.On("GetLimit", "device_code").Return(limit)
-	th.RateLimit.On("GetLimit", "token_refresh").Return(limit)
-	th.RateLimit.On("GetLimit", "websocket").Return(limit)
+	// Set up rate limit lookups
+	limitTypes := []string{
+		apiRequestLimit,
+		deviceCodeLimit,
+		tokenRefreshLimit,
+		wsConnectionLimit,
+	}
 
-	// Setup allows
-	th.RateLimit.On("Allow", "api", "test-request-id").Return(nil)
-	th.RateLimit.On("Allow", "device_code", "test-request-id").Return(nil)
-	th.RateLimit.On("Allow", "token_refresh", "test-request-id").Return(nil)
-	th.RateLimit.On("Allow", "websocket", "test-request-id").Return(nil)
+	for _, limitType := range limitTypes {
+		th.RateLimit.On("GetLimit", limitType).Return(limit)
+	}
+
+	// Set up allow checks with proper rate limit keys
+	th.RateLimit.On("Allow", mock.Anything, mock.MatchedBy(func(key ratelimit.LimitKey) bool {
+		// Allow any rate limit key that has a valid type
+		return key.Type != ""
+	})).Return(nil)
+}
+
+// ValidateJSON attempts to decode JSON into a map and verify its structure
+func (th *TestHandler) ValidateJSON(body []byte) (map[string]interface{}, error) {
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// CleanupTest performs cleanup after each test
+func (th *TestHandler) CleanupTest() {
+	th.Service.AssertExpectations(th.t)
+	th.Activation.AssertExpectations(th.t)
+	th.Auth.AssertExpectations(th.t)
+	th.RateLimit.AssertExpectations(th.t)
 }

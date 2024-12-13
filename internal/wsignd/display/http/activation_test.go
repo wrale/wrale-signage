@@ -21,20 +21,10 @@ import (
 
 func TestRequestDeviceCode(t *testing.T) {
 	th := testhttp.NewTestHandler()
-	defer func() {
-		th.Service.AssertExpectations(t)
-		th.Activation.AssertExpectations(t)
-		th.Auth.AssertExpectations(t)
-		th.RateLimit.AssertExpectations(t)
-	}()
+	defer th.CleanupTest()
 
-	// Setup rate limit mocks
-	th.RateLimit.On("GetLimit", "device_code").Return(ratelimit.Limit{
-		Rate:      100,
-		Period:    time.Minute,
-		BurstSize: 10,
-	})
-	th.RateLimit.On("Allow", mock.Anything, mock.Anything).Return(nil)
+	// Setup standard rate limiting bypass
+	th.SetupRateLimitBypass()
 
 	// Setup mock responses
 	th.Activation.On("GenerateCode", mock.Anything).Return(&activation.DeviceCode{
@@ -45,7 +35,8 @@ func TestRequestDeviceCode(t *testing.T) {
 	}, nil)
 
 	// Make request
-	req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/displays/device/code", nil)
+	req, err := th.MockRequest(http.MethodPost, "/api/v1alpha1/displays/device/code", nil)
+	assert.NoError(t, err)
 	rec := httptest.NewRecorder()
 
 	th.Handler.Router().ServeHTTP(rec, req)
@@ -54,7 +45,7 @@ func TestRequestDeviceCode(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 
 	var resp v1alpha1.DeviceCodeResponse
-	err := json.NewDecoder(rec.Body).Decode(&resp)
+	err = json.NewDecoder(rec.Body).Decode(&resp)
 	assert.NoError(t, err)
 	assert.Equal(t, "dev-code", resp.DeviceCode)
 	assert.Equal(t, "user-code", resp.UserCode)
@@ -181,33 +172,31 @@ func TestActivateDeviceCode(t *testing.T) {
 			th := testhttp.NewTestHandler()
 			testID := uuid.New()
 
-			defer func() {
-				th.Service.AssertExpectations(t)
-				th.Activation.AssertExpectations(t)
-				th.Auth.AssertExpectations(t)
-				th.RateLimit.AssertExpectations(t)
-			}()
+			defer th.CleanupTest()
 
-			// Setup rate limiting
-			th.RateLimit.On("GetLimit", "device_code").Return(ratelimit.Limit{
-				Rate:      100,
-				Period:    time.Minute,
-				BurstSize: 10,
-			})
-			th.RateLimit.On("Allow", mock.Anything, mock.Anything).Return(nil)
+			// Setup rate limiting bypass
+			th.SetupRateLimitBypass()
 
 			// Setup test-specific mocks
 			tt.setupMocks(th, testID)
 
 			// Make request
-			req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/displays/activate",
+			req, err := th.MockRequest(http.MethodPost, "/api/v1alpha1/displays/activate",
 				strings.NewReader(tt.requestBody))
-			req.Header.Set("Content-Type", "application/json")
+			assert.NoError(t, err)
 			rec := httptest.NewRecorder()
 
 			th.Handler.Router().ServeHTTP(rec, req)
 
 			assert.Equal(t, tt.wantStatus, rec.Code)
+
+			// Verify JSON response format if needed
+			if tt.wantStatus != http.StatusOK {
+				var respBody map[string]interface{}
+				err = json.NewDecoder(rec.Body).Decode(&respBody)
+				assert.NoError(t, err)
+				assert.Contains(t, respBody, "error")
+			}
 		})
 	}
 }
