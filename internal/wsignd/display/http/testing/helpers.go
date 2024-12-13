@@ -12,18 +12,24 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/mock"
 	displayhttp "github.com/wrale/wrale-signage/internal/wsignd/display/http"
 	"github.com/wrale/wrale-signage/internal/wsignd/display/http/testing/mocks"
 	"github.com/wrale/wrale-signage/internal/wsignd/ratelimit"
 )
 
-// Common rate limit types from handler configuration
+// Common rate limit types for test configuration
 const (
-	apiRequestLimit   = "api_request"
-	deviceCodeLimit   = "device_code"
-	tokenRefreshLimit = "token_refresh"
-	wsConnectionLimit = "ws_connection"
+	// Core rate limit types
+	apiRequestLimit   = "api_request"   // General API request limiting
+	deviceCodeLimit   = "device_code"   // Code generation/activation limits
+	tokenRefreshLimit = "token_refresh" // Token refresh operation limits
+	wsConnectionLimit = "ws_connection" // WebSocket connection limits
+
+	// Test values
+	testDisplayIDStr = "550e8400-e29b-41d4-a716-446655440000" // Test display UUID
+	testToken        = "test-token"                           // Test auth token
 )
 
 // TestHandler provides access to handler and mocks for testing
@@ -109,7 +115,13 @@ func (th *TestHandler) MockAuthorizedRequest(method, target string, body interfa
 		return nil, err
 	}
 
-	req.Header.Set("Authorization", "Bearer test-token")
+	// Add auth token
+	req.Header.Set("Authorization", "Bearer "+testToken)
+
+	// Set up auth validation
+	testDisplayID, _ := uuid.Parse(testDisplayIDStr)
+	th.Auth.On("ValidateAccessToken", mock.Anything, testToken).Return(testDisplayID, nil)
+
 	return req, nil
 }
 
@@ -129,7 +141,7 @@ func (th *TestHandler) SetupRateLimitBypass() {
 		BurstSize: 10,
 	}
 
-	// Set up rate limit lookups
+	// Set up rate limit lookups for all limit types
 	limitTypes := []string{
 		apiRequestLimit,
 		deviceCodeLimit,
@@ -138,6 +150,7 @@ func (th *TestHandler) SetupRateLimitBypass() {
 	}
 
 	for _, limitType := range limitTypes {
+		// Must use Return(), not ReturnValues()
 		th.RateLimit.On("GetLimit", limitType).Return(limit)
 	}
 
@@ -146,6 +159,13 @@ func (th *TestHandler) SetupRateLimitBypass() {
 		// Allow any rate limit key that has a valid type
 		return key.Type != ""
 	})).Return(nil)
+}
+
+// SetupAuthBypass configures auth service mock to bypass token validation
+func (th *TestHandler) SetupAuthBypass() {
+	testDisplayID, _ := uuid.Parse(testDisplayIDStr)
+	th.Auth.On("ValidateAccessToken", mock.Anything, mock.AnythingOfType("string")).
+		Return(testDisplayID, nil)
 }
 
 // ValidateJSON attempts to decode JSON into a map and verify its structure
@@ -159,6 +179,21 @@ func (th *TestHandler) ValidateJSON(body []byte) (map[string]interface{}, error)
 
 // CleanupTest performs cleanup after each test
 func (th *TestHandler) CleanupTest() {
+	// Enable this when debugging test failures
+	//if !th.Service.AssertExpectations(th.t) {
+	//	th.t.Error("Service expectations not met")
+	//}
+	//if !th.Activation.AssertExpectations(th.t) {
+	//	th.t.Error("Activation expectations not met")
+	//}
+	//if !th.Auth.AssertExpectations(th.t) {
+	//	th.t.Error("Auth expectations not met")
+	//}
+	//if !th.RateLimit.AssertExpectations(th.t) {
+	//	t.Error("RateLimit expectations not met")
+	//}
+
+	// Standard cleanup
 	th.Service.AssertExpectations(th.t)
 	th.Activation.AssertExpectations(th.t)
 	th.Auth.AssertExpectations(th.t)
