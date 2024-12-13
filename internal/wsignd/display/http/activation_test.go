@@ -1,0 +1,197 @@
+package http_test
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/wrale/wrale-signage/api/types/v1alpha1"
+	"github.com/wrale/wrale-signage/internal/wsignd/auth"
+	"github.com/wrale/wrale-signage/internal/wsignd/display"
+	"github.com/wrale/wrale-signage/internal/wsignd/display/activation"
+	testhttp "github.com/wrale/wrale-signage/internal/wsignd/display/http/testing"
+	"github.com/wrale/wrale-signage/internal/wsignd/ratelimit"
+)
+
+func TestRequestDeviceCode(t *testing.T) {
+	th := testhttp.NewTestHandler()
+
+	// Setup rate limit mocks
+	th.RateLimit.On("GetLimit", "device_code").Return(ratelimit.Limit{
+		Rate:      100,
+		Period:    time.Minute,
+		BurstSize: 10,
+	})
+	th.RateLimit.On("Allow", mock.Anything, mock.Anything).Return(nil)
+
+	// Setup mock responses
+	th.Activation.On("GenerateCode", mock.Anything).Return(&activation.DeviceCode{
+		DeviceCode:   "dev-code",
+		UserCode:     "user-code",
+		ExpiresAt:    time.Now().Add(15 * time.Minute),
+		PollInterval: 5,
+	}, nil)
+
+	// Make request
+	req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/displays/device/code", nil)
+	rec := httptest.NewRecorder()
+
+	th.Handler.Router().ServeHTTP(rec, req)
+
+	// Verify response
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var resp v1alpha1.DeviceCodeResponse
+	err := json.NewDecoder(rec.Body).Decode(&resp)
+	assert.NoError(t, err)
+	assert.Equal(t, "dev-code", resp.DeviceCode)
+	assert.Equal(t, "user-code", resp.UserCode)
+	assert.Equal(t, 5, resp.PollInterval)
+	assert.Equal(t, "/api/v1alpha1/displays/activate", resp.VerificationURI)
+
+	th.Activation.AssertExpectations(t)
+	th.RateLimit.AssertExpectations(t)
+}
+
+func TestActivateDeviceCode(t *testing.T) {
+	tests := []struct {
+		name        string
+		setupMocks  func(*testhttp.TestHandler, uuid.UUID)
+		requestBody string
+		wantStatus  int
+	}{
+		{
+			name: "successful activation",
+			setupMocks: func(th *testhttp.TestHandler, testID uuid.UUID) {
+				// Setup successful registration
+				th.Service.On("Register",
+					mock.Anything,
+					"test-display",
+					display.Location{
+						SiteID: "test-site",
+						Zone:   "test-zone",
+					},
+				).Return(&display.Display{
+					ID:   testID,
+					Name: "test-display",
+					Location: display.Location{
+						SiteID: "test-site",
+						Zone:   "test-zone",
+					},
+					State: display.StateUnregistered,
+				}, nil).Once()
+
+				// Setup successful activation
+				th.Activation.On("ActivateCode",
+					mock.Anything,
+					"TEST123",
+					testID,
+				).Return(nil).Once()
+
+				// Setup token creation
+				th.Auth.On("CreateToken",
+					mock.Anything,
+					testID,
+				).Return(&auth.Token{
+					AccessToken:        "access-token",
+					RefreshToken:       "refresh-token",
+					AccessTokenExpiry:  time.Now().Add(time.Hour),
+					RefreshTokenExpiry: time.Now().Add(24 * time.Hour),
+				}, nil).Once()
+			},
+			requestBody: `{
+				"activation_code": "TEST123",
+				"name": "test-display",
+				"location": {
+					"site_id": "test-site",
+					"zone": "test-zone"
+				}
+			}`,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name: "invalid activation code",
+			setupMocks: func(th *testhttp.TestHandler, testID uuid.UUID) {
+				// Registration succeeds
+				th.Service.On("Register",
+					mock.Anything,
+					"test-display",
+					display.Location{
+						SiteID: "test-site",
+						Zone:   "test-zone",
+					},
+				).Return(&display.Display{
+					ID:   testID,
+					Name: "test-display",
+					Location: display.Location{
+						SiteID: "test-site",
+						Zone:   "test-zone",
+					},
+					State: display.StateUnregistered,
+				}, nil).Once()
+
+				// But activation fails with not found
+				th.Activation.On("ActivateCode",
+					mock.Anything,
+					"INVALID",
+					testID,
+				).Return(activation.ErrCodeNotFound).Once()
+			},
+			requestBody: `{
+				"activation_code": "INVALID",
+				"name": "test-display",
+				"location": {
+					"site_id": "test-site",
+					"zone": "test-zone"
+				}
+			}`,
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name:        "invalid request body",
+			setupMocks:  func(th *testhttp.TestHandler, testID uuid.UUID) {},
+			requestBody: `{invalid json`,
+			wantStatus:  http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			th := testhttp.NewTestHandler()
+			testID := uuid.New()
+
+			// Setup rate limiting
+			th.RateLimit.On("GetLimit", "device_code").Return(ratelimit.Limit{
+				Rate:      100,
+				Period:    time.Minute,
+				BurstSize: 10,
+			})
+			th.RateLimit.On("Allow", mock.Anything, mock.Anything).Return(nil)
+
+			// Setup test-specific mocks
+			tt.setupMocks(th, testID)
+
+			// Make request
+			req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/displays/activate",
+				strings.NewReader(tt.requestBody))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+
+			th.Handler.Router().ServeHTTP(rec, req)
+
+			assert.Equal(t, tt.wantStatus, rec.Code)
+
+			// Verify all expectations
+			th.Service.AssertExpectations(t)
+			th.Activation.AssertExpectations(t)
+			th.Auth.AssertExpectations(t)
+			th.RateLimit.AssertExpectations(t)
+		})
+	}
+}
