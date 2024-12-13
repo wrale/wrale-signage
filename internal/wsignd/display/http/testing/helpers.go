@@ -204,7 +204,7 @@ func (th *TestHandler) CleanupTest() {
 			th.t.Logf("Failed expectations for %s mock:", name)
 			// Log information about unmet expectations
 			for _, call := range m.ExpectedCalls {
-				if call.Unmet() {
+				if call.NumberOfCalls == 0 {
 					th.t.Logf("  Expected: %s(%s)", call.Method, formatArgs(call.Arguments))
 					th.t.Logf("  Actual calls:")
 					for _, actual := range m.Calls {
@@ -235,8 +235,8 @@ func formatArgs(args []interface{}) string {
 		switch v := arg.(type) {
 		case mock.AnythingOfTypeArgument:
 			formatted[i] = fmt.Sprintf("any %v", v)
-		case mock.Matcher:
-			formatted[i] = fmt.Sprintf("matches(%T)", v)
+		case interface{ String() string }:
+			formatted[i] = fmt.Sprintf("matches(%s)", v.String())
 		case nil:
 			formatted[i] = "nil"
 		default:
