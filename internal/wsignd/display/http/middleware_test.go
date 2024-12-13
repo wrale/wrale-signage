@@ -10,7 +10,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	testhttp "github.com/wrale/wrale-signage/internal/wsignd/display/http/testing"
-	"github.com/wrale/wrale-signage/internal/wsignd/errors"
 	"github.com/wrale/wrale-signage/internal/wsignd/ratelimit"
 )
 
@@ -88,7 +87,7 @@ func TestMiddleware(t *testing.T) {
 					Period:    time.Minute,
 					BurstSize: 1,
 				})
-				th.RateLimit.On("Allow", "api", "test-request-id").Return(errors.New("rate limit exceeded"))
+				th.RateLimit.On("Allow", "api", "test-request-id").Return(ratelimit.ErrLimitExceeded)
 
 				req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/displays/123", nil)
 				rec := httptest.NewRecorder()
