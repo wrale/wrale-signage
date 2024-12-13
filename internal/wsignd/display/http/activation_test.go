@@ -16,11 +16,10 @@ import (
 	"github.com/wrale/wrale-signage/internal/wsignd/display"
 	"github.com/wrale/wrale-signage/internal/wsignd/display/activation"
 	testhttp "github.com/wrale/wrale-signage/internal/wsignd/display/http/testing"
-	"github.com/wrale/wrale-signage/internal/wsignd/ratelimit"
 )
 
 func TestRequestDeviceCode(t *testing.T) {
-	th := testhttp.NewTestHandler()
+	th := testhttp.NewTestHandler(t)
 	defer th.CleanupTest()
 
 	// Setup standard rate limiting bypass
@@ -169,7 +168,7 @@ func TestActivateDeviceCode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			th := testhttp.NewTestHandler()
+			th := testhttp.NewTestHandler(t)
 			testID := uuid.New()
 
 			defer th.CleanupTest()
@@ -196,6 +195,12 @@ func TestActivateDeviceCode(t *testing.T) {
 				err = json.NewDecoder(rec.Body).Decode(&respBody)
 				assert.NoError(t, err)
 				assert.Contains(t, respBody, "error")
+			} else {
+				var respBody map[string]interface{}
+				err = json.NewDecoder(rec.Body).Decode(&respBody)
+				assert.NoError(t, err)
+				assert.Contains(t, respBody, "access_token")
+				assert.Contains(t, respBody, "refresh_token")
 			}
 		})
 	}

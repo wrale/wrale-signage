@@ -3,6 +3,7 @@ package http_test
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -44,7 +45,7 @@ func TestStatusEndpoints(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			th := testhttp.NewTestHandler()
+			th := testhttp.NewTestHandler(t)
 			defer th.CleanupTest()
 
 			// Setup standard rate limiting bypass

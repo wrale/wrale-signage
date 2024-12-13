@@ -7,10 +7,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"testing"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/stretchr/testify/mock"
 	displayhttp "github.com/wrale/wrale-signage/internal/wsignd/display/http"
 	"github.com/wrale/wrale-signage/internal/wsignd/display/http/testing/mocks"
 	"github.com/wrale/wrale-signage/internal/wsignd/ratelimit"
@@ -32,10 +34,11 @@ type TestHandler struct {
 	Auth       *mocks.AuthService
 	RateLimit  *mocks.RateLimitService
 	logger     *slog.Logger
+	t          *testing.T
 }
 
 // NewTestHandler creates a new handler with mock services for testing
-func NewTestHandler() *TestHandler {
+func NewTestHandler(t *testing.T) *TestHandler {
 	// Create mocks
 	mockSvc := &mocks.Service{}
 	mockActSvc := &mocks.ActivationService{}
@@ -57,6 +60,7 @@ func NewTestHandler() *TestHandler {
 		Auth:       mockAuthSvc,
 		RateLimit:  mockRateLimitSvc,
 		logger:     logger,
+		t:          t,
 	}
 }
 
