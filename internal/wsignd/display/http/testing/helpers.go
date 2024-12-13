@@ -200,18 +200,29 @@ func (th *TestHandler) ValidateJSON(body []byte) (map[string]interface{}, error)
 func (th *TestHandler) CleanupTest() {
 	// Add debug logging for mock verification
 	verifyMock := func(m *mock.Mock, name string) {
+		// Use built-in expectation verification
 		if !m.AssertExpectations(th.t) {
 			th.t.Logf("Failed expectations for %s mock:", name)
-			// Log information about unmet expectations
+			// Log unmet expectations
 			for _, call := range m.ExpectedCalls {
-				if call.Times == 0 {
-					th.t.Logf("  Expected: %s(%s)", call.Method, formatArgs(call.Arguments))
-					th.t.Logf("  Actual calls:")
-					for _, actual := range m.Calls {
-						if actual.Method == call.Method {
-							th.t.Logf("    - %s(%s)", actual.Method, formatArgs(actual.Arguments))
-						}
+				// Only log if the call wasn't matched
+				matched := false
+				for _, actual := range m.Calls {
+					if call.Method == actual.Method {
+						matched = true
+						break
 					}
+				}
+				if !matched {
+					th.t.Logf("  Expected call not matched: %s(%s)", call.Method, formatArgs(call.Arguments))
+				}
+			}
+
+			// Log actual calls for comparison
+			if len(m.Calls) > 0 {
+				th.t.Log("  Actual calls made:")
+				for _, call := range m.Calls {
+					th.t.Logf("    - %s(%s)", call.Method, formatArgs(call.Arguments))
 				}
 			}
 		}
