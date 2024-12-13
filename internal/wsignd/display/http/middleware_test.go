@@ -3,15 +3,14 @@ package http_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
 	testhttp "github.com/wrale/wrale-signage/internal/wsignd/display/http/testing"
+	"github.com/wrale/wrale-signage/internal/wsignd/errors"
 	"github.com/wrale/wrale-signage/internal/wsignd/ratelimit"
 )
 
@@ -29,11 +28,11 @@ func TestMiddleware(t *testing.T) {
 				th.SetupRateLimitBypass()
 
 				// Add panic handler
-				router.HandleFunc("/api/v1alpha1/displays/panic", func(w http.ResponseWriter, r *http.Request) {
+				router.HandleFunc("/test/panic", func(w http.ResponseWriter, r *http.Request) {
 					panic("test panic")
 				})
 
-				req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/displays/panic", nil)
+				req := httptest.NewRequest(http.MethodGet, "/test/panic", nil)
 				rec := httptest.NewRecorder()
 
 				router.ServeHTTP(rec, req)
@@ -58,11 +57,17 @@ func TestMiddleware(t *testing.T) {
 
 				th.SetupRateLimitBypass()
 
-				req, err := th.MockRequest(http.MethodGet, "/test", nil)
-				assert.NoError(t, err)
+				// Add test handler
+				router := th.Handler.Router()
+				router.Get("/test/id", func(w http.ResponseWriter, r *http.Request) {
+					// Request ID should be propagated and added to response headers
+					w.WriteHeader(http.StatusOK)
+				})
+
+				req := httptest.NewRequest(http.MethodGet, "/test/id", nil)
 				rec := httptest.NewRecorder()
 
-				th.Handler.Router().ServeHTTP(rec, req)
+				router.ServeHTTP(rec, req)
 
 				assert.Equal(t, http.StatusOK, rec.Code)
 				assert.NotEmpty(t, rec.Header().Get("X-Request-ID"))
@@ -78,12 +83,12 @@ func TestMiddleware(t *testing.T) {
 				}()
 
 				// Configure rate limit mock to deny request
-				th.RateLimit.On("GetLimit", "display").Return(ratelimit.Limit{
+				th.RateLimit.On("GetLimit", "api").Return(ratelimit.Limit{
 					Rate:      1,
 					Period:    time.Minute,
 					BurstSize: 1,
 				})
-				th.RateLimit.On("Allow", "display", mock.Anything).Return(errors.New("rate limit exceeded"))
+				th.RateLimit.On("Allow", "api", "test-request-id").Return(errors.New("rate limit exceeded"))
 
 				req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/displays/123", nil)
 				rec := httptest.NewRecorder()
@@ -102,14 +107,14 @@ func TestMiddleware(t *testing.T) {
 				th.SetupRateLimitBypass()
 
 				// Add handler that blocks until context is cancelled
-				router.HandleFunc("/api/v1alpha1/displays/slow", func(w http.ResponseWriter, r *http.Request) {
+				router.HandleFunc("/test/slow", func(w http.ResponseWriter, r *http.Request) {
 					<-r.Context().Done()
 					w.WriteHeader(http.StatusServiceUnavailable)
 				})
 
 				// Create cancellable request
 				ctx, cancel := context.WithCancel(context.Background())
-				req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/displays/slow", nil).WithContext(ctx)
+				req := httptest.NewRequest(http.MethodGet, "/test/slow", nil).WithContext(ctx)
 				rec := httptest.NewRecorder()
 
 				// Cancel context after a short delay

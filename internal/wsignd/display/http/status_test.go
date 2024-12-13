@@ -40,6 +40,10 @@ func TestStatusEndpoints(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			th := testhttp.NewTestHandler()
+			defer func() {
+				th.RateLimit.AssertExpectations(t)
+			}()
+
 			th.SetupRateLimitBypass()
 
 			req := httptest.NewRequest(http.MethodGet, tt.path, nil)

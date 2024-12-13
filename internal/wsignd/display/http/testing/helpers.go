@@ -7,11 +7,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	displayhttp "github.com/wrale/wrale-signage/internal/wsignd/display/http"
 	"github.com/wrale/wrale-signage/internal/wsignd/display/http/testing/mocks"
+	"github.com/wrale/wrale-signage/internal/wsignd/ratelimit"
 )
 
 // TestHandler provides access to handler and mocks for testing
@@ -98,10 +100,24 @@ func WriteJSON(w http.ResponseWriter, status int, v interface{}) error {
 	return json.NewEncoder(w).Encode(v)
 }
 
-// SetupRateLimitBypass configures rate limit mock to always allow requests
+// SetupRateLimitBypass configures rate limit mock to allow all requests
 func (th *TestHandler) SetupRateLimitBypass() {
-	th.RateLimit.On("GetLimit", "device_code").Return(struct{}{})
-	th.RateLimit.On("GetLimit", "display").Return(struct{}{})
+	// Default rate limit configuration
+	limit := ratelimit.Limit{
+		Rate:      100,
+		Period:    time.Minute,
+		BurstSize: 10,
+	}
+
+	// Setup limit configs
+	th.RateLimit.On("GetLimit", "api").Return(limit)
+	th.RateLimit.On("GetLimit", "device_code").Return(limit)
+	th.RateLimit.On("GetLimit", "token_refresh").Return(limit)
+	th.RateLimit.On("GetLimit", "websocket").Return(limit)
+
+	// Setup allows
+	th.RateLimit.On("Allow", "api", "test-request-id").Return(nil)
 	th.RateLimit.On("Allow", "device_code", "test-request-id").Return(nil)
-	th.RateLimit.On("Allow", "display", "test-request-id").Return(nil)
+	th.RateLimit.On("Allow", "token_refresh", "test-request-id").Return(nil)
+	th.RateLimit.On("Allow", "websocket", "test-request-id").Return(nil)
 }
