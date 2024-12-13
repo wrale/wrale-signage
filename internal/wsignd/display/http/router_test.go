@@ -70,19 +70,25 @@ func TestRouter(t *testing.T) {
 		PollInterval: 5,
 	}, nil)
 
-	mockActSvc.On("ActivateCode", mock.Anything, "TEST123", mock.AnythingOfType("uuid.UUID")).Return(activation.ErrCodeNotFound)
+	// Create a fixed test ID for consistent mock setup
+	testDisplayID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
 
-	// Setup display service mocks for registration
+	// Setup display service mock for registration first
 	mockSvc.On("Register", mock.Anything, "test-display", mock.MatchedBy(func(loc display.Location) bool {
 		return loc.SiteID == "test-site" && loc.Zone == "test-zone"
 	})).Return(&display.Display{
-		ID:   uuid.New(),
+		ID:   testDisplayID,
 		Name: "test-display",
 		Location: display.Location{
 			SiteID: "test-site",
 			Zone:   "test-zone",
 		},
-	}, nil)
+	}, nil).Once()
+
+	// Then set up activation service mock to use same test ID
+	mockActSvc.On("ActivateCode", mock.Anything, "TEST123", mock.MatchedBy(func(id uuid.UUID) bool {
+		return id == testDisplayID
+	})).Return(activation.ErrCodeNotFound).Once()
 
 	mockSvc.On("GetByName", mock.Anything, mock.AnythingOfType("string")).Return(nil, display.ErrNotFound{ID: "unknown"})
 
@@ -97,7 +103,6 @@ func TestRouter(t *testing.T) {
 		wantStatus    int
 		rateLimitType string // Rate limit type to expect
 	}{
-		// Public endpoints (no auth required)
 		{
 			name:          "display registration endpoint",
 			method:        http.MethodPost,
@@ -133,8 +138,6 @@ func TestRouter(t *testing.T) {
 			wantStatus:    http.StatusUnauthorized, // Missing Authorization header
 			rateLimitType: "token_refresh",
 		},
-
-		// Protected endpoints (auth required)
 		{
 			name:          "display get endpoint - no auth",
 			method:        http.MethodGet,
@@ -167,8 +170,6 @@ func TestRouter(t *testing.T) {
 			wantStatus:    http.StatusUnauthorized,
 			rateLimitType: "websocket",
 		},
-
-		// Health check endpoints (bypass rate limits)
 		{
 			name:       "health check endpoint",
 			method:     http.MethodGet,
@@ -185,8 +186,6 @@ func TestRouter(t *testing.T) {
 			wantStatus: http.StatusOK,
 			// No rate limit type - health checks bypass limits
 		},
-
-		// Invalid routes
 		{
 			name:       "non-existent endpoint returns 404",
 			method:     http.MethodGet,
@@ -214,6 +213,12 @@ func TestRouter(t *testing.T) {
 			router.ServeHTTP(rec, req)
 
 			assert.Equal(t, tt.wantStatus, rec.Code)
+
+			// Verify mock expectations for service calls
+			if tt.name == "device activation endpoint" {
+				mockSvc.AssertExpectations(t)
+				mockActSvc.AssertExpectations(t)
+			}
 
 			// Verify rate limit calls if expected
 			if tt.rateLimitType != "" {
