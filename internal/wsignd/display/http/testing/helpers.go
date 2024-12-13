@@ -202,10 +202,10 @@ func (th *TestHandler) CleanupTest() {
 	verifyMock := func(m *mock.Mock, name string) {
 		if !m.AssertExpectations(th.t) {
 			th.t.Logf("Failed expectations for %s mock", name)
-			// Log unmet expectations for debugging
+			// Log any details from the mock about why it failed
 			for _, call := range m.ExpectedCalls {
-				if !call.Met {
-					th.t.Logf("Unmet expectation: %s(%v)", call.Method, call.Arguments)
+				if !call.WasCalled() {
+					th.t.Logf("Expected but not called: %s(%v)", call.Method, call.Arguments)
 				}
 			}
 		}
