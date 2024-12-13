@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	testhttp "github.com/wrale/wrale-signage/internal/wsignd/display/http/testing"
 	"github.com/wrale/wrale-signage/internal/wsignd/ratelimit"
 )
@@ -21,17 +22,19 @@ func TestMiddleware(t *testing.T) {
 		{
 			name: "recovers from panic",
 			test: func(t *testing.T) {
-				th := testhttp.NewTestHandler()
-				router := th.Handler.Router()
+				th := testhttp.NewTestHandler(t)
+				defer th.CleanupTest()
 
 				th.SetupRateLimitBypass()
 
 				// Add panic handler
+				router := th.Handler.Router()
 				router.HandleFunc("/test/panic", func(w http.ResponseWriter, r *http.Request) {
 					panic("test panic")
 				})
 
-				req := httptest.NewRequest(http.MethodGet, "/test/panic", nil)
+				req, err := th.MockRequest(http.MethodGet, "/test/panic", nil)
+				assert.NoError(t, err)
 				rec := httptest.NewRecorder()
 
 				router.ServeHTTP(rec, req)
@@ -41,7 +44,7 @@ func TestMiddleware(t *testing.T) {
 				var resp struct {
 					Error string `json:"error"`
 				}
-				err := json.NewDecoder(rec.Body).Decode(&resp)
+				err = json.NewDecoder(rec.Body).Decode(&resp)
 				assert.NoError(t, err)
 				assert.Equal(t, "internal error", resp.Error)
 			},
@@ -49,10 +52,8 @@ func TestMiddleware(t *testing.T) {
 		{
 			name: "adds request id to context",
 			test: func(t *testing.T) {
-				th := testhttp.NewTestHandler()
-				defer func() {
-					th.RateLimit.AssertExpectations(t)
-				}()
+				th := testhttp.NewTestHandler(t)
+				defer th.CleanupTest()
 
 				th.SetupRateLimitBypass()
 
@@ -63,7 +64,8 @@ func TestMiddleware(t *testing.T) {
 					w.WriteHeader(http.StatusOK)
 				})
 
-				req := httptest.NewRequest(http.MethodGet, "/test/id", nil)
+				req, err := th.MockRequest(http.MethodGet, "/test/id", nil)
+				assert.NoError(t, err)
 				rec := httptest.NewRecorder()
 
 				router.ServeHTTP(rec, req)
@@ -76,36 +78,47 @@ func TestMiddleware(t *testing.T) {
 		{
 			name: "enforces rate limits",
 			test: func(t *testing.T) {
-				th := testhttp.NewTestHandler()
-				defer func() {
-					th.RateLimit.AssertExpectations(t)
-				}()
+				th := testhttp.NewTestHandler(t)
+				defer th.CleanupTest()
 
 				// Configure rate limit mock to deny request
-				th.RateLimit.On("GetLimit", "api").Return(ratelimit.Limit{
+				th.RateLimit.On("GetLimit", "api_request").Return(ratelimit.Limit{
 					Rate:      1,
 					Period:    time.Minute,
 					BurstSize: 1,
 				})
-				th.RateLimit.On("Allow", "api", "test-request-id").Return(ratelimit.ErrLimitExceeded)
 
-				req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/displays/123", nil)
+				// Expect rate limit check with proper key
+				th.RateLimit.On("Allow", mock.Anything, mock.MatchedBy(func(key ratelimit.LimitKey) bool {
+					return key.Type == "api_request" && key.RemoteIP != ""
+				})).Return(ratelimit.ErrLimitExceeded)
+
+				req, err := th.MockRequest(http.MethodGet, "/api/v1alpha1/displays/123", nil)
+				assert.NoError(t, err)
 				rec := httptest.NewRecorder()
 
 				th.Handler.Router().ServeHTTP(rec, req)
 
 				assert.Equal(t, http.StatusTooManyRequests, rec.Code)
+
+				// Verify JSON response
+				var respBody map[string]interface{}
+				err = json.NewDecoder(rec.Body).Decode(&respBody)
+				assert.NoError(t, err)
+				assert.Contains(t, respBody, "error")
+				assert.Contains(t, respBody["error"], "rate limit")
 			},
 		},
 		{
 			name: "handles context cancellation",
 			test: func(t *testing.T) {
-				th := testhttp.NewTestHandler()
-				router := th.Handler.Router()
+				th := testhttp.NewTestHandler(t)
+				defer th.CleanupTest()
 
 				th.SetupRateLimitBypass()
 
 				// Add handler that blocks until context is cancelled
+				router := th.Handler.Router()
 				router.HandleFunc("/test/slow", func(w http.ResponseWriter, r *http.Request) {
 					<-r.Context().Done()
 					w.WriteHeader(http.StatusServiceUnavailable)
@@ -113,7 +126,9 @@ func TestMiddleware(t *testing.T) {
 
 				// Create cancellable request
 				ctx, cancel := context.WithCancel(context.Background())
-				req := httptest.NewRequest(http.MethodGet, "/test/slow", nil).WithContext(ctx)
+				req, err := th.MockRequest(http.MethodGet, "/test/slow", nil)
+				assert.NoError(t, err)
+				req = req.WithContext(ctx)
 				rec := httptest.NewRecorder()
 
 				// Cancel context after a short delay
