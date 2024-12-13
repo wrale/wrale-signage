@@ -204,7 +204,7 @@ func (th *TestHandler) CleanupTest() {
 			th.t.Logf("Failed expectations for %s mock:", name)
 			// Log information about unmet expectations
 			for _, call := range m.ExpectedCalls {
-				if call.NumberOfCalls == 0 {
+				if call.Times == 0 {
 					th.t.Logf("  Expected: %s(%s)", call.Method, formatArgs(call.Arguments))
 					th.t.Logf("  Actual calls:")
 					for _, actual := range m.Calls {
