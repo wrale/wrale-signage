@@ -201,11 +201,17 @@ func (th *TestHandler) CleanupTest() {
 	// Add debug logging for mock verification
 	verifyMock := func(m *mock.Mock, name string) {
 		if !m.AssertExpectations(th.t) {
-			th.t.Logf("Failed expectations for %s mock", name)
-			// Log any details from the mock about why it failed
+			th.t.Logf("Failed expectations for %s mock:", name)
+			// Log information about unmet expectations
 			for _, call := range m.ExpectedCalls {
-				if !call.WasCalled() {
-					th.t.Logf("Expected but not called: %s(%v)", call.Method, call.Arguments)
+				if call.Unmet() {
+					th.t.Logf("  Expected: %s(%s)", call.Method, formatArgs(call.Arguments))
+					th.t.Logf("  Actual calls:")
+					for _, actual := range m.Calls {
+						if actual.Method == call.Method {
+							th.t.Logf("    - %s(%s)", actual.Method, formatArgs(actual.Arguments))
+						}
+					}
 				}
 			}
 		}
@@ -216,4 +222,27 @@ func (th *TestHandler) CleanupTest() {
 	verifyMock(&th.Activation.Mock, "Activation")
 	verifyMock(&th.Auth.Mock, "Auth")
 	verifyMock(&th.RateLimit.Mock, "RateLimit")
+}
+
+// formatArgs converts mock arguments to a readable string
+func formatArgs(args []interface{}) string {
+	if len(args) == 0 {
+		return ""
+	}
+
+	formatted := make([]string, len(args))
+	for i, arg := range args {
+		switch v := arg.(type) {
+		case mock.AnythingOfTypeArgument:
+			formatted[i] = fmt.Sprintf("any %v", v)
+		case mock.Matcher:
+			formatted[i] = fmt.Sprintf("matches(%T)", v)
+		case nil:
+			formatted[i] = "nil"
+		default:
+			formatted[i] = fmt.Sprintf("%v", v)
+		}
+	}
+
+	return fmt.Sprintf("%v", formatted)
 }
