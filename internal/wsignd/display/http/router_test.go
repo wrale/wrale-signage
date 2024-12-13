@@ -70,9 +70,20 @@ func TestRouter(t *testing.T) {
 		PollInterval: 5,
 	}, nil)
 
-	mockActSvc.On("ActivateCode", mock.Anything, mock.AnythingOfType("string")).Return(uuid.Nil, activation.ErrCodeNotFound)
+	mockActSvc.On("ActivateCode", mock.Anything, "TEST123", mock.AnythingOfType("uuid.UUID")).Return(activation.ErrCodeNotFound)
 
-	// Setup display service mocks
+	// Setup display service mocks for registration
+	mockSvc.On("Register", mock.Anything, "test-display", mock.MatchedBy(func(loc display.Location) bool {
+		return loc.SiteID == "test-site" && loc.Zone == "test-zone"
+	})).Return(&display.Display{
+		ID:   uuid.New(),
+		Name: "test-display",
+		Location: display.Location{
+			SiteID: "test-site",
+			Zone:   "test-zone",
+		},
+	}, nil)
+
 	mockSvc.On("GetByName", mock.Anything, mock.AnythingOfType("string")).Return(nil, display.ErrNotFound{ID: "unknown"})
 
 	router := handler.Router()
@@ -108,7 +119,7 @@ func TestRouter(t *testing.T) {
 			name:          "device activation endpoint",
 			method:        http.MethodPost,
 			path:          "/api/v1alpha1/displays/activate",
-			body:          `{"code":"TEST123"}`,
+			body:          `{"activation_code":"TEST123","name":"test-display","location":{"site_id":"test-site","zone":"test-zone"}}`,
 			auth:          false,
 			wantStatus:    http.StatusNotFound, // Invalid code returns 404
 			rateLimitType: "device_code",
