@@ -21,6 +21,12 @@ import (
 
 func TestRequestDeviceCode(t *testing.T) {
 	th := testhttp.NewTestHandler()
+	defer func() {
+		th.Service.AssertExpectations(t)
+		th.Activation.AssertExpectations(t)
+		th.Auth.AssertExpectations(t)
+		th.RateLimit.AssertExpectations(t)
+	}()
 
 	// Setup rate limit mocks
 	th.RateLimit.On("GetLimit", "device_code").Return(ratelimit.Limit{
@@ -54,9 +60,6 @@ func TestRequestDeviceCode(t *testing.T) {
 	assert.Equal(t, "user-code", resp.UserCode)
 	assert.Equal(t, 5, resp.PollInterval)
 	assert.Equal(t, "/api/v1alpha1/displays/activate", resp.VerificationURI)
-
-	th.Activation.AssertExpectations(t)
-	th.RateLimit.AssertExpectations(t)
 }
 
 func TestActivateDeviceCode(t *testing.T) {
@@ -74,43 +77,50 @@ func TestActivateDeviceCode(t *testing.T) {
 					mock.Anything,
 					"test-display",
 					display.Location{
-						SiteID: "test-site",
-						Zone:   "test-zone",
+						SiteID:   "test-site",
+						Zone:     "test-zone",
+						Position: "main",
 					},
 				).Return(&display.Display{
 					ID:   testID,
 					Name: "test-display",
 					Location: display.Location{
-						SiteID: "test-site",
-						Zone:   "test-zone",
+						SiteID:   "test-site",
+						Zone:     "test-zone",
+						Position: "main",
 					},
 					State: display.StateUnregistered,
-				}, nil).Once()
+				}, nil)
 
 				// Setup successful activation
 				th.Activation.On("ActivateCode",
 					mock.Anything,
 					"TEST123",
-					testID,
-				).Return(nil).Once()
+					mock.MatchedBy(func(id uuid.UUID) bool {
+						return id == testID
+					}),
+				).Return(nil)
 
 				// Setup token creation
 				th.Auth.On("CreateToken",
 					mock.Anything,
-					testID,
+					mock.MatchedBy(func(id uuid.UUID) bool {
+						return id == testID
+					}),
 				).Return(&auth.Token{
 					AccessToken:        "access-token",
 					RefreshToken:       "refresh-token",
 					AccessTokenExpiry:  time.Now().Add(time.Hour),
 					RefreshTokenExpiry: time.Now().Add(24 * time.Hour),
-				}, nil).Once()
+				}, nil)
 			},
 			requestBody: `{
 				"activation_code": "TEST123",
 				"name": "test-display",
 				"location": {
 					"site_id": "test-site",
-					"zone": "test-zone"
+					"zone": "test-zone",
+					"position": "main"
 				}
 			}`,
 			wantStatus: http.StatusOK,
@@ -123,32 +133,37 @@ func TestActivateDeviceCode(t *testing.T) {
 					mock.Anything,
 					"test-display",
 					display.Location{
-						SiteID: "test-site",
-						Zone:   "test-zone",
+						SiteID:   "test-site",
+						Zone:     "test-zone",
+						Position: "main",
 					},
 				).Return(&display.Display{
 					ID:   testID,
 					Name: "test-display",
 					Location: display.Location{
-						SiteID: "test-site",
-						Zone:   "test-zone",
+						SiteID:   "test-site",
+						Zone:     "test-zone",
+						Position: "main",
 					},
 					State: display.StateUnregistered,
-				}, nil).Once()
+				}, nil)
 
 				// But activation fails with not found
 				th.Activation.On("ActivateCode",
 					mock.Anything,
 					"INVALID",
-					testID,
-				).Return(activation.ErrCodeNotFound).Once()
+					mock.MatchedBy(func(id uuid.UUID) bool {
+						return id == testID
+					}),
+				).Return(activation.ErrCodeNotFound)
 			},
 			requestBody: `{
 				"activation_code": "INVALID",
 				"name": "test-display",
 				"location": {
 					"site_id": "test-site",
-					"zone": "test-zone"
+					"zone": "test-zone",
+					"position": "main"
 				}
 			}`,
 			wantStatus: http.StatusNotFound,
@@ -165,6 +180,13 @@ func TestActivateDeviceCode(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			th := testhttp.NewTestHandler()
 			testID := uuid.New()
+
+			defer func() {
+				th.Service.AssertExpectations(t)
+				th.Activation.AssertExpectations(t)
+				th.Auth.AssertExpectations(t)
+				th.RateLimit.AssertExpectations(t)
+			}()
 
 			// Setup rate limiting
 			th.RateLimit.On("GetLimit", "device_code").Return(ratelimit.Limit{
@@ -186,12 +208,6 @@ func TestActivateDeviceCode(t *testing.T) {
 			th.Handler.Router().ServeHTTP(rec, req)
 
 			assert.Equal(t, tt.wantStatus, rec.Code)
-
-			// Verify all expectations
-			th.Service.AssertExpectations(t)
-			th.Activation.AssertExpectations(t)
-			th.Auth.AssertExpectations(t)
-			th.RateLimit.AssertExpectations(t)
 		})
 	}
 }
