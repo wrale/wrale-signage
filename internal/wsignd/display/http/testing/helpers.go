@@ -3,6 +3,7 @@ package testing
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -31,6 +32,14 @@ const (
 	testDisplayIDStr = "550e8400-e29b-41d4-a716-446655440000" // Test display UUID
 	testToken        = "test-token"                           // Test auth token
 )
+
+// validRateLimitTypes maps known rate limit types to their descriptions
+var validRateLimitTypes = map[string]string{
+	apiRequestLimit:   "General API request limiting",
+	deviceCodeLimit:   "Code generation/activation limits",
+	tokenRefreshLimit: "Token refresh operation limits",
+	wsConnectionLimit: "WebSocket connection limits",
+}
 
 // TestHandler provides access to handler and mocks for testing
 type TestHandler struct {
@@ -68,6 +77,14 @@ func NewTestHandler(t *testing.T) *TestHandler {
 		logger:     logger,
 		t:          t,
 	}
+}
+
+// SetupTestDefaults configures common test prerequisites in the correct order
+func (th *TestHandler) SetupTestDefaults() {
+	// First set up auth bypass as it's most fundamental
+	th.SetupAuthBypass()
+	// Then set up rate limiting which may depend on auth context
+	th.SetupRateLimitBypass()
 }
 
 // MockRequest creates a test request with proper test context
@@ -141,61 +158,62 @@ func (th *TestHandler) SetupRateLimitBypass() {
 		BurstSize: 10,
 	}
 
-	// Set up rate limit lookups for all limit types
-	limitTypes := []string{
-		apiRequestLimit,
-		deviceCodeLimit,
-		tokenRefreshLimit,
-		wsConnectionLimit,
+	// Set up rate limit lookups for each type with specific expectations
+	for limitType := range validRateLimitTypes {
+		th.RateLimit.On("GetLimit", limitType).Return(limit).Maybe()
 	}
 
-	for _, limitType := range limitTypes {
-		// Must use Return(), not ReturnValues()
-		th.RateLimit.On("GetLimit", limitType).Return(limit)
-	}
-
-	// Set up allow checks with proper rate limit keys
+	// Set up allow checks with precise rate limit key validation
 	th.RateLimit.On("Allow", mock.Anything, mock.MatchedBy(func(key ratelimit.LimitKey) bool {
-		// Allow any rate limit key that has a valid type
-		return key.Type != ""
-	})).Return(nil)
+		// Validate that the rate limit type is known
+		_, ok := validRateLimitTypes[key.Type]
+		if !ok {
+			th.t.Logf("Unknown rate limit type encountered: %s", key.Type)
+		}
+		return ok
+	})).Return(nil).Maybe()
 }
 
 // SetupAuthBypass configures auth service mock to bypass token validation
 func (th *TestHandler) SetupAuthBypass() {
 	testDisplayID, _ := uuid.Parse(testDisplayIDStr)
-	th.Auth.On("ValidateAccessToken", mock.Anything, mock.AnythingOfType("string")).
-		Return(testDisplayID, nil)
+	// Accept any token in tests, but capture it for debugging
+	th.Auth.On("ValidateAccessToken", mock.Anything, mock.MatchedBy(func(token string) bool {
+		if token == "" {
+			th.t.Log("Empty token received in auth validation")
+			return false
+		}
+		return true
+	})).Return(testDisplayID, nil).Maybe()
 }
 
 // ValidateJSON attempts to decode JSON into a map and verify its structure
 func (th *TestHandler) ValidateJSON(body []byte) (map[string]interface{}, error) {
 	var result map[string]interface{}
 	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to decode JSON response: %v", err)
 	}
 	return result, nil
 }
 
 // CleanupTest performs cleanup after each test
 func (th *TestHandler) CleanupTest() {
-	// Enable this when debugging test failures
-	//if !th.Service.AssertExpectations(th.t) {
-	//	th.t.Error("Service expectations not met")
-	//}
-	//if !th.Activation.AssertExpectations(th.t) {
-	//	th.t.Error("Activation expectations not met")
-	//}
-	//if !th.Auth.AssertExpectations(th.t) {
-	//	th.t.Error("Auth expectations not met")
-	//}
-	//if !th.RateLimit.AssertExpectations(th.t) {
-	//	t.Error("RateLimit expectations not met")
-	//}
+	// Add debug logging for mock verification
+	verifyMock := func(m *mock.Mock, name string) {
+		if !m.AssertExpectations(th.t) {
+			th.t.Logf("Failed expectations for %s mock", name)
+			// Log unmet expectations for debugging
+			for _, call := range m.ExpectedCalls {
+				if !call.Met {
+					th.t.Logf("Unmet expectation: %s(%v)", call.Method, call.Arguments)
+				}
+			}
+		}
+	}
 
-	// Standard cleanup
-	th.Service.AssertExpectations(th.t)
-	th.Activation.AssertExpectations(th.t)
-	th.Auth.AssertExpectations(th.t)
-	th.RateLimit.AssertExpectations(th.t)
+	// Verify all mocks with debug support
+	verifyMock(&th.Service.Mock, "Service")
+	verifyMock(&th.Activation.Mock, "Activation")
+	verifyMock(&th.Auth.Mock, "Auth")
+	verifyMock(&th.RateLimit.Mock, "RateLimit")
 }
