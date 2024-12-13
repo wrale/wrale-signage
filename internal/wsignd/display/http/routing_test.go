@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/wrale/wrale-signage/internal/wsignd/display/activation"
 	testhttp "github.com/wrale/wrale-signage/internal/wsignd/display/http/testing"
-	"github.com/wrale/wrale-signage/internal/wsignd/ratelimit"
 )
 
 func TestRouteAuthentication(t *testing.T) {
@@ -84,22 +83,19 @@ func TestRouteAuthentication(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			th := testhttp.NewTestHandler()
+			th := testhttp.NewTestHandler(t)
+			defer th.CleanupTest()
 
-			// Setup rate limiting for all routes
-			th.RateLimit.On("GetLimit", mock.Anything).Return(ratelimit.Limit{
-				Rate:      100,
-				Period:    time.Minute,
-				BurstSize: 10,
-			}).Maybe()
-			th.RateLimit.On("Allow", mock.Anything, mock.Anything).Return(nil).Maybe()
+			// Setup standard rate limiting bypass
+			th.SetupRateLimitBypass()
 
 			// Setup activation service mock for device code tests
 			if tt.path == "/api/v1alpha1/displays/device/code" {
 				th.Activation.On("GenerateCode", mock.Anything).Return(testDeviceCode(), nil)
 			}
 
-			req := httptest.NewRequest(tt.method, tt.path, nil)
+			req, err := th.MockRequest(tt.method, tt.path, nil)
+			assert.NoError(t, err)
 			rec := httptest.NewRecorder()
 
 			th.Handler.Router().ServeHTTP(rec, req)
@@ -117,12 +113,14 @@ func TestRoutingMiddleware(t *testing.T) {
 		{
 			name: "adds request id header",
 			test: func(t *testing.T) {
-				th := testhttp.NewTestHandler()
-				th.Activation.On("GenerateCode", mock.Anything).Return(testDeviceCode(), nil)
-				th.RateLimit.On("GetLimit", mock.Anything).Return(ratelimit.Limit{})
-				th.RateLimit.On("Allow", mock.Anything, mock.Anything).Return(nil)
+				th := testhttp.NewTestHandler(t)
+				defer th.CleanupTest()
 
-				req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/displays/device/code", nil)
+				th.SetupRateLimitBypass()
+				th.Activation.On("GenerateCode", mock.Anything).Return(testDeviceCode(), nil)
+
+				req, err := th.MockRequest(http.MethodPost, "/api/v1alpha1/displays/device/code", nil)
+				assert.NoError(t, err)
 				rec := httptest.NewRecorder()
 
 				th.Handler.Router().ServeHTTP(rec, req)
@@ -134,10 +132,13 @@ func TestRoutingMiddleware(t *testing.T) {
 		{
 			name: "handles context cancellation",
 			test: func(t *testing.T) {
-				th := testhttp.NewTestHandler()
-				router := th.Handler.Router()
+				th := testhttp.NewTestHandler(t)
+				defer th.CleanupTest()
+
+				th.SetupRateLimitBypass()
 
 				// Create a slow handler that will be canceled
+				router := th.Handler.Router()
 				router.HandleFunc("/api/v1alpha1/displays/slow", func(w http.ResponseWriter, r *http.Request) {
 					select {
 					case <-r.Context().Done():
@@ -147,7 +148,8 @@ func TestRoutingMiddleware(t *testing.T) {
 					}
 				})
 
-				req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/displays/slow", nil)
+				req, err := th.MockRequest(http.MethodGet, "/api/v1alpha1/displays/slow", nil)
+				assert.NoError(t, err)
 				req = req.WithContext(canceledContext())
 				rec := httptest.NewRecorder()
 
