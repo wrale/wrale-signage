@@ -5,9 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
-	"time"
 
-	"github.com/go-chi/chi/v5/middleware"
 	"github.com/wrale/wrale-signage/api/types/v1alpha1"
 	"github.com/wrale/wrale-signage/internal/wsignd/auth"
 	"github.com/wrale/wrale-signage/internal/wsignd/display"
