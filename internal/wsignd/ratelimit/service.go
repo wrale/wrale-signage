@@ -10,7 +10,8 @@ import (
 	"github.com/wrale/wrale-signage/internal/wsignd/config"
 )
 
-// RateLimitService implements the Service interface
+// RateLimitService implements the Service interface by providing
+// a thread-safe, configurable rate limiting implementation.
 type RateLimitService struct {
 	store   Store
 	logger  *slog.Logger
@@ -27,17 +28,23 @@ func NewService(store Store, logger *slog.Logger) Service {
 	}
 }
 
-// Status returns the current remaining requests and reset time for a key
-func (s *RateLimitService) Status(key LimitKey) (remaining int, reset time.Time, err error) {
+// Status returns the current rate limit status for a key.
+// This provides all information needed for rate limit headers and decisions.
+func (s *RateLimitService) Status(key LimitKey) (*LimitStatus, error) {
 	if key.Type == "" {
-		return 0, time.Time{}, ErrInvalidKey
+		return nil, ErrInvalidKey
 	}
 
 	// Get the configured limit
 	limit := s.GetLimit(key.Type)
 	if limit.Rate == 0 {
 		// If no limit configured, return "infinite" remaining
-		return -1, time.Now().Add(limit.Period), nil
+		return &LimitStatus{
+			Remaining: -1,
+			Reset:     time.Now().Add(time.Hour), // Standard 1-hour window
+			Limit:     limit,
+			Period:    time.Hour,
+		}, nil
 	}
 
 	// Get current count from store
@@ -49,20 +56,25 @@ func (s *RateLimitService) Status(key LimitKey) (remaining int, reset time.Time,
 			"token", key.Token,
 			"endpoint", key.Endpoint,
 		)
-		return 0, time.Time{}, err
+		return nil, fmt.Errorf("failed to get count: %w", err)
 	}
 
-	// Calculate remaining and next reset time
-	remaining = limit.Rate - count
+	// Calculate remaining and reset time
+	remaining := limit.Rate - count
 	if remaining < 0 {
 		remaining = 0
 	}
 
 	// Calculate when this window resets
-	// Note: This is an approximation based on the Period
-	reset = time.Now().Add(limit.Period)
+	now := time.Now()
+	reset := now.Add(limit.Period)
 
-	return remaining, reset, nil
+	return &LimitStatus{
+		Remaining: remaining,
+		Reset:     reset,
+		Limit:     limit,
+		Period:    limit.Period,
+	}, nil
 }
 
 // Allow checks if an operation should be allowed
@@ -124,15 +136,16 @@ func (s *RateLimitService) Reset(ctx context.Context, key LimitKey) error {
 			"token", key.Token,
 			"endpoint", key.Endpoint,
 		)
-		return err
+		return fmt.Errorf("failed to reset limit: %w", err)
 	}
 
 	return nil
 }
 
-// RegisterConfiguredLimits sets up rate limits from configuration
+// RegisterConfiguredLimits sets up rate limits from configuration.
+// It provides the standard set of rate limits needed for the application.
 func (s *RateLimitService) RegisterConfiguredLimits(cfg config.RateLimitConfig) {
-	// Register each configured limit, with built-in defaults
+	// Register each configured limit with sensible defaults
 	limits := []struct {
 		name  string
 		limit Limit
@@ -143,7 +156,7 @@ func (s *RateLimitService) RegisterConfiguredLimits(cfg config.RateLimitConfig) 
 				Rate:        cfg.API.TokenRefreshPerHour,
 				Period:      time.Hour,
 				BurstSize:   cfg.API.RefreshBurstSize,
-				WaitTimeout: 0,
+				WaitTimeout: 0, // No waiting for tokens
 			},
 		},
 		{
@@ -160,8 +173,8 @@ func (s *RateLimitService) RegisterConfiguredLimits(cfg config.RateLimitConfig) 
 			limit: Limit{
 				Rate:        cfg.API.DeviceCodePerInterval,
 				Period:      cfg.API.DeviceCodeInterval,
-				BurstSize:   0,
-				WaitTimeout: 0,
+				BurstSize:   0, // No bursts for security
+				WaitTimeout: 0, // No waiting
 			},
 		},
 		{
@@ -189,9 +202,9 @@ func (s *RateLimitService) RegisterConfiguredLimits(cfg config.RateLimitConfig) 
 	}
 }
 
-// RegisterDefaultLimits configures standard rate limits
+// RegisterDefaultLimits configures standard rate limits with secure defaults.
+// These values provide a balance between security and usability.
 func (s *RateLimitService) RegisterDefaultLimits() {
-	// Define sensible defaults that balance security with usability
 	limits := []struct {
 		name  string
 		limit Limit
@@ -248,7 +261,8 @@ func (s *RateLimitService) RegisterDefaultLimits() {
 	}
 }
 
-// RegisterLimit adds or updates a rate limit configuration
+// RegisterLimit adds or updates a rate limit configuration.
+// It validates the limit parameters before storing them.
 func (s *RateLimitService) RegisterLimit(limitType string, limit Limit) error {
 	if limit.Rate <= 0 || limit.Period <= 0 {
 		return ErrInvalidLimit
