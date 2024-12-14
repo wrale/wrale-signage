@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -8,7 +9,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/google/uuid"
 	"github.com/wrale/wrale-signage/api/types/v1alpha1"
 	"github.com/wrale/wrale-signage/internal/wsignd/auth"
 	"github.com/wrale/wrale-signage/internal/wsignd/display"
