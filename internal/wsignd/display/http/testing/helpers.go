@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -269,7 +270,8 @@ func mockCallString(call mock.Call) string {
 	for i, arg := range call.Arguments {
 		switch v := arg.(type) {
 		case mock.AnythingOfTypeArgument:
-			args[i] = fmt.Sprintf("any(%v)", v.String())
+			// AnythingOfTypeArgument implements fmt.Stringer
+			args[i] = fmt.Sprintf("any(%s)", v)
 		case fmt.Stringer:
 			args[i] = fmt.Sprintf("matches(%s)", v.String())
 		case nil:
@@ -278,5 +280,5 @@ func mockCallString(call mock.Call) string {
 			args[i] = fmt.Sprintf("%v", v)
 		}
 	}
-	return fmt.Sprintf("%s(%s)", call.Method, args)
+	return fmt.Sprintf("%s(%s)", call.Method, strings.Join(args, ", "))
 }
