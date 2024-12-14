@@ -2,6 +2,7 @@ package http
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 
@@ -125,61 +126,61 @@ func mapToOAuthError(err error, defaultStatus int) *OAuthError {
 		return oauthErr
 	}
 
-	// Map domain errors to OAuth errors
-	switch e := err.(type) {
-	case display.ErrNotFound:
+	// Map domain errors to OAuth errors using errors.Is
+	switch {
+	case errors.Is(err, display.ErrNotFound):
 		return NewOAuthError(OAuthErrInvalidRequest,
 			"Display not found",
 			http.StatusNotFound,
-			e)
+			err)
 
-	case display.ErrExists:
+	case errors.Is(err, display.ErrExists):
 		return NewOAuthError(OAuthErrInvalidRequest,
 			"Display already exists",
 			http.StatusConflict,
-			e)
+			err)
 
-	case display.ErrInvalidState:
+	case errors.Is(err, display.ErrInvalidState):
 		return NewOAuthError(OAuthErrInvalidRequest,
 			"Invalid display state",
 			http.StatusBadRequest,
-			e)
+			err)
 
-	case display.ErrInvalidName:
+	case errors.Is(err, display.ErrInvalidName):
 		return NewOAuthError(OAuthErrInvalidRequest,
 			"Invalid display name",
 			http.StatusBadRequest,
-			e)
+			err)
 
-	case display.ErrInvalidLocation:
+	case errors.Is(err, display.ErrInvalidLocation):
 		return NewOAuthError(OAuthErrInvalidRequest,
 			"Invalid display location",
 			http.StatusBadRequest,
-			e)
+			err)
 
-	case display.ErrVersionMismatch:
+	case errors.Is(err, display.ErrVersionMismatch):
 		return NewOAuthError(OAuthErrInvalidRequest,
 			"Display was modified by another request",
 			http.StatusConflict,
-			e)
+			err)
 
-	case activation.ErrCodeNotFound:
+	case errors.Is(err, activation.ErrCodeNotFound):
 		return NewOAuthError(OAuthErrInvalidGrant,
 			"Invalid activation code",
 			http.StatusBadRequest,
-			e)
+			err)
 
-	case activation.ErrCodeExpired:
+	case errors.Is(err, activation.ErrCodeExpired):
 		return NewOAuthError(OAuthErrExpiredToken,
 			"Activation code expired",
 			http.StatusBadRequest,
-			e)
+			err)
 
-	case activation.ErrAlreadyActive:
+	case errors.Is(err, activation.ErrAlreadyActive):
 		return NewOAuthError(OAuthErrInvalidGrant,
 			"Code already activated",
 			http.StatusConflict,
-			e)
+			err)
 
 	default:
 		return NewOAuthError(OAuthErrServerError,

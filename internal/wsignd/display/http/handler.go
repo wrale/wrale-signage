@@ -46,6 +46,11 @@ func NewHandler(
 	return h
 }
 
+// writeError writes an OAuth-compliant error response
+func (h *Handler) writeError(w http.ResponseWriter, err error, defaultStatus int) {
+	writeError(w, err, defaultStatus, h.logger)
+}
+
 // HandleContentEvents handles content playback and error events from displays
 func (h *Handler) HandleContentEvents(w http.ResponseWriter, r *http.Request) {
 	var events []v1alpha1.ContentEvent
