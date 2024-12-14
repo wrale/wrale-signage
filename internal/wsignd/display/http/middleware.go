@@ -14,7 +14,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/wrale/wrale-signage/internal/wsignd/auth"
-	werrors "github.com/wrale/wrale-signage/internal/wsignd/errors"
 	"github.com/wrale/wrale-signage/internal/wsignd/ratelimit"
 )
 
@@ -23,7 +22,6 @@ type contextKey int
 
 const (
 	displayIDKey contextKey = iota
-	loggerKey
 )
 
 // common error responses
@@ -58,7 +56,7 @@ func logMiddleware(logger *slog.Logger) func(next http.Handler) http.Handler {
 			)
 
 			// Store logger in context for handlers
-			ctx := context.WithValue(r.Context(), loggerKey, reqLogger)
+			ctx := context.WithValue(r.Context(), loggerKey{}, reqLogger)
 			r = r.WithContext(ctx)
 
 			defer func() {
@@ -175,9 +173,9 @@ func rateLimitMiddleware(service ratelimit.Service, logger *slog.Logger, options
 
 						// Retrieve current status
 						remaining, resetTime := 0, time.Now().Add(limit.Period)
-						if counts, err := service.Status(limitKey); err == nil {
-							remaining = counts.Remaining
-							resetTime = counts.Reset
+						if status, err := service.Status(limitKey); err == nil {
+							remaining = status.Remaining
+							resetTime = status.Reset
 						}
 
 						// Set standard rate limit headers

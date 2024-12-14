@@ -146,6 +146,14 @@ func (m *mockRateLimitService) GetLimit(limitType string) ratelimit.Limit {
 	return args.Get(0).(ratelimit.Limit)
 }
 
+func (m *mockRateLimitService) Status(key ratelimit.LimitKey) (*ratelimit.LimitStatus, error) {
+	args := m.Called(key)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*ratelimit.LimitStatus), args.Error(1)
+}
+
 func (m *mockRateLimitService) Reset(ctx context.Context, key ratelimit.LimitKey) error {
 	args := m.Called(ctx, key)
 	return args.Error(0)
