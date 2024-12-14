@@ -2,6 +2,7 @@ package http
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"time"
 
@@ -26,7 +27,7 @@ func (h *Handler) RequestDeviceCode(w http.ResponseWriter, r *http.Request) {
 			"error", err,
 			"requestID", reqID,
 		)
-		h.writeError(w, err, http.StatusInternalServerError)
+		h.writeError(w, werrors.NewError("GENERATION_FAILED", "failed to generate device code", "RequestDeviceCode", err), http.StatusInternalServerError)
 		return
 	}
 
@@ -49,27 +50,49 @@ func (h *Handler) RequestDeviceCode(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// validateActivationRequest performs initial validation of request body and required fields
+func validateActivationRequest(body []byte) (*v1alpha1.DisplayRegistrationRequest, error) {
+	if len(body) == 0 {
+		return nil, werrors.NewError("INVALID_INPUT", "request body is required", "ActivateDeviceCode", nil)
+	}
+
+	var req v1alpha1.DisplayRegistrationRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		return nil, werrors.NewError("INVALID_INPUT", "invalid request body", "ActivateDeviceCode", err)
+	}
+
+	if req.ActivationCode == "" || req.Name == "" {
+		return nil, werrors.NewError("INVALID_INPUT", "activation code and display name are required", "ActivateDeviceCode", nil)
+	}
+
+	return &req, nil
+}
+
 // ActivateDeviceCode handles device activation by user code
 func (h *Handler) ActivateDeviceCode(w http.ResponseWriter, r *http.Request) {
 	reqID := middleware.GetReqID(r.Context())
 
-	var req v1alpha1.DisplayRegistrationRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.logger.Error("failed to decode activation request",
-			"error", err,
-			"requestID", reqID,
-		)
-		h.writeError(w, werrors.NewError("INVALID_INPUT", "invalid request body", "ActivateDeviceCode", err), http.StatusBadRequest)
+	h.logger.Info("activating display",
+		"requestID", reqID,
+		"activationCode", "",
+		"name", "",
+	)
+
+	// Read request body
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		h.writeError(w, werrors.NewError("INVALID_INPUT", "failed to read request body", "ActivateDeviceCode", err), http.StatusBadRequest)
 		return
 	}
 
-	h.logger.Info("activating display",
-		"requestID", reqID,
-		"activationCode", req.ActivationCode,
-		"name", req.Name,
-	)
+	// Validate request
+	req, err := validateActivationRequest(body)
+	if err != nil {
+		h.writeError(w, err, http.StatusBadRequest)
+		return
+	}
 
-	// First register the display
+	// Register display first
 	d, err := h.service.Register(r.Context(), req.Name, display.Location{
 		SiteID:   req.Location.SiteID,
 		Zone:     req.Location.Zone,
@@ -82,7 +105,6 @@ func (h *Handler) ActivateDeviceCode(w http.ResponseWriter, r *http.Request) {
 			"name", req.Name,
 		)
 
-		// Map domain errors to HTTP status codes
 		var status int
 		switch err.(type) {
 		case display.ErrExists:
@@ -109,7 +131,7 @@ func (h *Handler) ActivateDeviceCode(w http.ResponseWriter, r *http.Request) {
 		if err == activation.ErrCodeNotFound || err == activation.ErrCodeExpired {
 			status = http.StatusNotFound
 		}
-		h.writeError(w, err, status)
+		h.writeError(w, werrors.NewError("NOT_FOUND", "activation code not found", "ActivateDeviceCode", err), status)
 		return
 	}
 
@@ -121,7 +143,6 @@ func (h *Handler) ActivateDeviceCode(w http.ResponseWriter, r *http.Request) {
 			"requestID", reqID,
 			"displayID", d.ID,
 		)
-		// Continue with activation but without tokens
 		h.writeError(w, werrors.NewError("TOKEN_ERROR", "activation succeeded but token generation failed", "ActivateDeviceCode", err), http.StatusInternalServerError)
 		return
 	}

@@ -31,7 +31,7 @@ func TestRequestDeviceCode(t *testing.T) {
 		UserCode:     "user-code",
 		ExpiresAt:    time.Now().Add(15 * time.Minute),
 		PollInterval: 5,
-	}, nil)
+	}, nil).Once()
 
 	// Make request
 	req, err := th.MockRequest(http.MethodPost, "/api/v1alpha1/displays/device/code", nil)
@@ -58,6 +58,10 @@ func TestActivateDeviceCode(t *testing.T) {
 		requestBody string
 		setupMocks  func(*testhttp.TestHandler, uuid.UUID)
 		wantStatus  int
+		wantError   *struct {
+			code    string
+			message string
+		}
 	}{
 		{
 			name: "successful activation",
@@ -151,12 +155,43 @@ func TestActivateDeviceCode(t *testing.T) {
 				).Return(activation.ErrCodeNotFound).Once()
 			},
 			wantStatus: http.StatusNotFound,
+			wantError: &struct {
+				code    string
+				message string
+			}{
+				code:    "NOT_FOUND",
+				message: "activation code not found",
+			},
 		},
 		{
 			name:        "invalid request body",
 			requestBody: `{invalid json`,
 			setupMocks:  func(th *testhttp.TestHandler, testID uuid.UUID) {},
 			wantStatus:  http.StatusBadRequest,
+			wantError: &struct {
+				code    string
+				message string
+			}{
+				code:    "INVALID_INPUT",
+				message: "invalid request body",
+			},
+		},
+		{
+			name: "missing required fields",
+			requestBody: `{
+				"activation_code": "",
+				"name": "",
+				"location": {}
+			}`,
+			setupMocks: func(th *testhttp.TestHandler, testID uuid.UUID) {},
+			wantStatus: http.StatusBadRequest,
+			wantError: &struct {
+				code    string
+				message string
+			}{
+				code:    "INVALID_INPUT",
+				message: "activation code and display name are required",
+			},
 		},
 	}
 
@@ -187,8 +222,9 @@ func TestActivateDeviceCode(t *testing.T) {
 			err = json.NewDecoder(rec.Body).Decode(&respBody)
 			assert.NoError(t, err)
 
-			if tt.wantStatus != http.StatusOK {
-				assert.Contains(t, respBody, "error")
+			if tt.wantError != nil {
+				assert.Equal(t, tt.wantError.code, respBody["code"], "Error code mismatch")
+				assert.Equal(t, tt.wantError.message, respBody["message"], "Error message mismatch")
 			} else {
 				assert.Contains(t, respBody, "display", "Response should contain display info")
 				assert.Contains(t, respBody, "auth", "Response should contain auth info")

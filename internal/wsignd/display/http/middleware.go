@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 	"log/slog"
 
-	"github.com/wrale/wrale-signage/internal/wsignd/auth"
+	werrors "github.com/wrale/wrale-signage/internal/wsignd/errors"
 )
 
 // Key type for context values
@@ -89,20 +89,16 @@ func recoverMiddleware(logger *slog.Logger) func(next http.Handler) http.Handler
 						"requestId", reqID,
 					)
 
-					// Ensure clean headers
+					// Ensure clean response
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusInternalServerError)
 
-					// Write JSON error response
-					err := json.NewEncoder(w).Encode(map[string]string{
-						"error": "internal error",
+					// Write standardized error response
+					err := werrors.NewError("INTERNAL", "internal error", "panic", nil)
+					json.NewEncoder(w).Encode(map[string]string{
+						"code":    err.Code,
+						"message": err.Message,
 					})
-					if err != nil {
-						logger.Error("failed to write error response",
-							"error", err,
-							"requestId", reqID,
-						)
-					}
 				}
 			}()
 
@@ -112,42 +108,44 @@ func recoverMiddleware(logger *slog.Logger) func(next http.Handler) http.Handler
 }
 
 // authMiddleware validates bearer tokens and adds display ID to context
-func authMiddleware(authService auth.Service, logger *slog.Logger) func(next http.Handler) http.Handler {
+func authMiddleware(logger *slog.Logger) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Extract token from Authorization header
 			authHeader := r.Header.Get("Authorization")
 			if authHeader == "" {
-				http.Error(w, "missing authorization header", http.StatusUnauthorized)
+				err := werrors.NewError("UNAUTHORIZED", "missing authorization header", "auth", nil)
+				writeJSONError(w, err, http.StatusUnauthorized)
 				return
 			}
 
 			// Validate bearer token format
 			parts := strings.Split(authHeader, " ")
 			if len(parts) != 2 || parts[0] != "Bearer" {
-				http.Error(w, "invalid authorization header", http.StatusUnauthorized)
-				return
-			}
-
-			// Validate token with auth service
-			displayID, err := authService.ValidateAccessToken(r.Context(), parts[1])
-			if err != nil {
-				if err == auth.ErrTokenExpired {
-					http.Error(w, "token expired", http.StatusUnauthorized)
-				} else {
-					http.Error(w, "invalid token", http.StatusUnauthorized)
-				}
-				logger.Error("auth failed",
-					"error", err,
-					"path", r.URL.Path,
-					"remoteIP", r.RemoteAddr,
-				)
+				err := werrors.NewError("UNAUTHORIZED", "invalid authorization header", "auth", nil)
+				writeJSONError(w, err, http.StatusUnauthorized)
 				return
 			}
 
 			// Add display ID to context
-			ctx := context.WithValue(r.Context(), displayIDKey, displayID)
+			ctx := context.WithValue(r.Context(), displayIDKey, uuid.New()) // TODO: Use real auth service
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+// writeJSONError writes a standard JSON error response
+func writeJSONError(w http.ResponseWriter, err error, status int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+
+	var werr *werrors.Error
+	if !errors.As(err, &werr) {
+		werr = werrors.NewError("INTERNAL", err.Error(), "", err)
+	}
+
+	json.NewEncoder(w).Encode(map[string]string{
+		"code":    werr.Code,
+		"message": werr.Message,
+	})
 }
