@@ -1,8 +1,10 @@
 package ratelimit
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
+	"math/rand"
 	"net/http"
 	"strconv"
 	"strings"
@@ -15,6 +17,9 @@ import (
 // It enforces rate limits while providing standard rate limit headers
 // and proper error responses following RFC 6585 and RFC 7231.
 func Middleware(service Service, logger *slog.Logger, options RateLimitOptions) func(http.Handler) http.Handler {
+	// Initialize a secure random source for jitter calculations
+	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Extract request context for logging
@@ -49,7 +54,7 @@ func Middleware(service Service, logger *slog.Logger, options RateLimitOptions) 
 			if status.Remaining <= 0 {
 				// If waiting is enabled and we have a timeout, attempt to wait
 				if shouldWait(options, status.Limit) {
-					if err := waitForCapacity(r.Context(), service, key, options, reqLogger); err != nil {
+					if err := waitForCapacity(r.Context(), service, key, options, reqLogger, rnd); err != nil {
 						handleLimitExceeded(w, r, status, reqLogger)
 						return
 					}
@@ -143,7 +148,7 @@ func shouldWait(options RateLimitOptions, limit Limit) bool {
 
 // waitForCapacity attempts to wait for rate limit capacity to become available.
 // It uses exponential backoff with jitter to prevent thundering herd problems.
-func waitForCapacity(ctx context.Context, service Service, key LimitKey, options RateLimitOptions, logger *slog.Logger) error {
+func waitForCapacity(ctx context.Context, service Service, key LimitKey, options RateLimitOptions, logger *slog.Logger, rnd *rand.Rand) error {
 	timeout := options.WaitTimeout
 	if timeout == 0 {
 		timeout = service.GetLimit(key.Type).WaitTimeout
@@ -154,9 +159,14 @@ func waitForCapacity(ctx context.Context, service Service, key LimitKey, options
 	maxBackoff := 1 * time.Second     // Cap backoff at 1 second
 
 	for {
-		// Check if we've exceeded our wait timeout
-		if time.Since(startTime) > timeout {
-			return fmt.Errorf("timeout waiting for rate limit capacity")
+		// Check if we've exceeded our wait timeout or context was canceled
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("context canceled while waiting for capacity: %w", ctx.Err())
+		default:
+			if time.Since(startTime) > timeout {
+				return fmt.Errorf("timeout waiting for rate limit capacity")
+			}
 		}
 
 		// Check if we have capacity
@@ -165,7 +175,7 @@ func waitForCapacity(ctx context.Context, service Service, key LimitKey, options
 		}
 
 		// Add jitter to prevent thundering herd
-		jitter := time.Duration(float64(backoff) * (0.5 + rand.Float64())) // ±50% jitter
+		jitter := time.Duration(float64(backoff) * (0.5 + rnd.Float64())) // ±50% jitter
 		time.Sleep(jitter)
 
 		// Exponential backoff

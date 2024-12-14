@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+
+	"github.com/wrale/wrale-signage/internal/wsignd/display"
+	"github.com/wrale/wrale-signage/internal/wsignd/display/activation"
 )
 
 // OAuthErrorType represents standard OAuth 2.0 error codes
@@ -21,58 +24,83 @@ const (
 	OAuthErrServerError          OAuthErrorType = "server_error"
 )
 
-// OAuthError represents an OAuth 2.0 error response
+// OAuthError represents an OAuth 2.0 error response with HTTP status
 type OAuthError struct {
 	Code        OAuthErrorType
 	Description string
 	Status      int
+	Cause       error // Original error that caused this
 }
 
 // Error implements the error interface
 func (e *OAuthError) Error() string {
+	if e.Cause != nil {
+		return e.Description + ": " + e.Cause.Error()
+	}
 	return e.Description
 }
 
+// Unwrap returns the underlying error
+func (e *OAuthError) Unwrap() error {
+	return e.Cause
+}
+
+// NewOAuthError creates a new OAuth error with cause
+func NewOAuthError(code OAuthErrorType, description string, status int, cause error) *OAuthError {
+	return &OAuthError{
+		Code:        code,
+		Description: description,
+		Status:      status,
+		Cause:       cause,
+	}
+}
+
 // OAuth error constructors for common cases
-func NewOAuthSlowDownError() *OAuthError {
-	return &OAuthError{
-		Code:        OAuthErrSlowDown,
-		Description: "Too many requests, please reduce request rate",
-		Status:      http.StatusTooManyRequests,
-	}
+func NewOAuthSlowDownError(cause error) *OAuthError {
+	return NewOAuthError(OAuthErrSlowDown,
+		"Too many requests, please reduce request rate",
+		http.StatusTooManyRequests,
+		cause)
 }
 
-func NewOAuthInvalidRequestError(description string) *OAuthError {
-	return &OAuthError{
-		Code:        OAuthErrInvalidRequest,
-		Description: description,
-		Status:      http.StatusBadRequest,
-	}
+func NewOAuthInvalidRequestError(description string, cause error) *OAuthError {
+	return NewOAuthError(OAuthErrInvalidRequest,
+		description,
+		http.StatusBadRequest,
+		cause)
 }
 
-func NewOAuthInvalidTokenError(description string) *OAuthError {
-	return &OAuthError{
-		Code:        OAuthErrExpiredToken,
-		Description: description,
-		Status:      http.StatusUnauthorized,
-	}
+func NewOAuthInvalidTokenError(description string, cause error) *OAuthError {
+	return NewOAuthError(OAuthErrExpiredToken,
+		description,
+		http.StatusUnauthorized,
+		cause)
 }
 
-func NewOAuthServerError(description string) *OAuthError {
-	return &OAuthError{
-		Code:        OAuthErrServerError,
-		Description: description,
-		Status:      http.StatusInternalServerError,
-	}
+func NewOAuthServerError(description string, cause error) *OAuthError {
+	return NewOAuthError(OAuthErrServerError,
+		description,
+		http.StatusInternalServerError,
+		cause)
 }
 
-// writeOAuthError writes a standardized OAuth 2.0 error response
-func writeOAuthError(w http.ResponseWriter, err *OAuthError, logger *slog.Logger) {
+// writeError writes any error as an appropriate OAuth error response
+func writeError(w http.ResponseWriter, err error, defaultStatus int, logger *slog.Logger) {
+	oauthErr := mapToOAuthError(err, defaultStatus)
+	writeOAuthResponse(w, oauthErr, logger)
+}
+
+// writeOAuthResponse writes a pre-constructed OAuth error response
+func writeOAuthResponse(w http.ResponseWriter, err *OAuthError, logger *slog.Logger) {
+	// Set security headers first
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Pragma", "no-cache")
+
+	// Set status code
 	w.WriteHeader(err.Status)
 
+	// Build response body
 	response := struct {
 		Error            string `json:"error"`
 		ErrorDescription string `json:"error_description,omitempty"`
@@ -81,6 +109,7 @@ func writeOAuthError(w http.ResponseWriter, err *OAuthError, logger *slog.Logger
 		ErrorDescription: err.Description,
 	}
 
+	// Log and encode response
 	if encodeErr := json.NewEncoder(w).Encode(response); encodeErr != nil {
 		logger.Error("failed to write error response",
 			"error", encodeErr,
@@ -89,12 +118,73 @@ func writeOAuthError(w http.ResponseWriter, err *OAuthError, logger *slog.Logger
 	}
 }
 
-// mapDomainError converts domain errors to OAuth errors
-func mapDomainError(err error) *OAuthError {
-	switch err.(type) {
-	case *OAuthError:
-		return err.(*OAuthError)
+// mapToOAuthError converts domain errors to OAuth errors
+func mapToOAuthError(err error, defaultStatus int) *OAuthError {
+	// Already an OAuth error
+	if oauthErr, ok := err.(*OAuthError); ok {
+		return oauthErr
+	}
+
+	// Map domain errors to OAuth errors
+	switch e := err.(type) {
+	case display.ErrNotFound:
+		return NewOAuthError(OAuthErrInvalidRequest,
+			"Display not found",
+			http.StatusNotFound,
+			e)
+
+	case display.ErrExists:
+		return NewOAuthError(OAuthErrInvalidRequest,
+			"Display already exists",
+			http.StatusConflict,
+			e)
+
+	case display.ErrInvalidState:
+		return NewOAuthError(OAuthErrInvalidRequest,
+			"Invalid display state",
+			http.StatusBadRequest,
+			e)
+
+	case display.ErrInvalidName:
+		return NewOAuthError(OAuthErrInvalidRequest,
+			"Invalid display name",
+			http.StatusBadRequest,
+			e)
+
+	case display.ErrInvalidLocation:
+		return NewOAuthError(OAuthErrInvalidRequest,
+			"Invalid display location",
+			http.StatusBadRequest,
+			e)
+
+	case display.ErrVersionMismatch:
+		return NewOAuthError(OAuthErrInvalidRequest,
+			"Display was modified by another request",
+			http.StatusConflict,
+			e)
+
+	case activation.ErrCodeNotFound:
+		return NewOAuthError(OAuthErrInvalidGrant,
+			"Invalid activation code",
+			http.StatusBadRequest,
+			e)
+
+	case activation.ErrCodeExpired:
+		return NewOAuthError(OAuthErrExpiredToken,
+			"Activation code expired",
+			http.StatusBadRequest,
+			e)
+
+	case activation.ErrAlreadyActive:
+		return NewOAuthError(OAuthErrInvalidGrant,
+			"Code already activated",
+			http.StatusConflict,
+			e)
+
 	default:
-		return NewOAuthServerError("An unexpected error occurred")
+		return NewOAuthError(OAuthErrServerError,
+			"An unexpected error occurred",
+			defaultStatus,
+			err)
 	}
 }
