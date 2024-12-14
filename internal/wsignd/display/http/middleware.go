@@ -123,7 +123,10 @@ func authMiddleware(authService auth.Service, logger *slog.Logger) func(next htt
 			authHeader := r.Header.Get("Authorization")
 			if authHeader == "" {
 				err := werrors.NewError("UNAUTHORIZED", "missing authorization header", "auth", nil)
-				writeJSONError(w, err, http.StatusUnauthorized)
+				writeJSONError(w, err, http.StatusUnauthorized, logger.With(
+					"path", r.URL.Path,
+					"requestId", middleware.GetReqID(r.Context()),
+				))
 				return
 			}
 
@@ -131,7 +134,10 @@ func authMiddleware(authService auth.Service, logger *slog.Logger) func(next htt
 			parts := strings.Split(authHeader, " ")
 			if len(parts) != 2 || parts[0] != "Bearer" {
 				err := werrors.NewError("UNAUTHORIZED", "invalid authorization header", "auth", nil)
-				writeJSONError(w, err, http.StatusUnauthorized)
+				writeJSONError(w, err, http.StatusUnauthorized, logger.With(
+					"path", r.URL.Path,
+					"requestId", middleware.GetReqID(r.Context()),
+				))
 				return
 			}
 
@@ -139,9 +145,15 @@ func authMiddleware(authService auth.Service, logger *slog.Logger) func(next htt
 			displayID, err := authService.ValidateAccessToken(r.Context(), parts[1])
 			if err != nil {
 				if err == auth.ErrTokenExpired {
-					writeJSONError(w, werrors.NewError("UNAUTHORIZED", "token expired", "auth", err), http.StatusUnauthorized)
+					writeJSONError(w, werrors.NewError("UNAUTHORIZED", "token expired", "auth", err), http.StatusUnauthorized, logger.With(
+						"path", r.URL.Path,
+						"requestId", middleware.GetReqID(r.Context()),
+					))
 				} else {
-					writeJSONError(w, werrors.NewError("UNAUTHORIZED", "invalid token", "auth", err), http.StatusUnauthorized)
+					writeJSONError(w, werrors.NewError("UNAUTHORIZED", "invalid token", "auth", err), http.StatusUnauthorized, logger.With(
+						"path", r.URL.Path,
+						"requestId", middleware.GetReqID(r.Context()),
+					))
 				}
 				logger.Error("auth failed",
 					"error", err,
@@ -159,7 +171,7 @@ func authMiddleware(authService auth.Service, logger *slog.Logger) func(next htt
 }
 
 // writeJSONError writes a standard JSON error response
-func writeJSONError(w http.ResponseWriter, err error, status int) {
+func writeJSONError(w http.ResponseWriter, err error, status int, logger *slog.Logger) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 
@@ -173,6 +185,8 @@ func writeJSONError(w http.ResponseWriter, err error, status int) {
 		"message": werr.Message,
 	}); encodeErr != nil {
 		// Log encode error but can't write response at this point
-		log.Printf("failed to write error response: %v", encodeErr)
+		logger.Error("failed to write error response",
+			"error", encodeErr,
+		)
 	}
 }
