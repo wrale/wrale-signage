@@ -262,13 +262,15 @@ func printUnmetExpectations(t *testing.T, m *mock.Mock, name string) {
 	}
 }
 
-// mockCallString formats a mock call for logging
+// mockCallString formats a mock call for debugging output.
+// It properly handles type assertions and mock matcher arguments.
 func mockCallString(call mock.Call) string {
 	args := make([]string, len(call.Arguments))
 	for i, arg := range call.Arguments {
 		switch v := arg.(type) {
 		case mock.AnythingOfTypeArgument:
-			args[i] = fmt.Sprintf("any(%s)", v.Type)
+			// Use String() method to get the type safely
+			args[i] = fmt.Sprintf("any(%s)", v.String())
 		case fmt.Stringer:
 			args[i] = fmt.Sprintf("matches(%s)", v.String())
 		case nil:
