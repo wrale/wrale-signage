@@ -97,10 +97,16 @@ func recoverMiddleware(logger *slog.Logger) func(next http.Handler) http.Handler
 
 					// Write standardized error response
 					err := werrors.NewError("INTERNAL", "internal error", "panic", nil)
-					json.NewEncoder(w).Encode(map[string]string{
+					if encodeErr := json.NewEncoder(w).Encode(map[string]string{
 						"code":    err.Code,
 						"message": err.Message,
-					})
+					}); encodeErr != nil {
+						logger.Error("failed to write error response",
+							"error", encodeErr,
+							"path", r.URL.Path,
+							"requestId", reqID,
+						)
+					}
 				}
 			}()
 
@@ -162,8 +168,11 @@ func writeJSONError(w http.ResponseWriter, err error, status int) {
 		werr = werrors.NewError("INTERNAL", err.Error(), "", err)
 	}
 
-	json.NewEncoder(w).Encode(map[string]string{
+	if encodeErr := json.NewEncoder(w).Encode(map[string]string{
 		"code":    werr.Code,
 		"message": werr.Message,
-	})
+	}); encodeErr != nil {
+		// Log encode error but can't write response at this point
+		log.Printf("failed to write error response: %v", encodeErr)
+	}
 }

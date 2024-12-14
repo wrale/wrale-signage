@@ -133,7 +133,12 @@ func (h *Handler) ServeWebSocket(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleHealth() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"status":"ok"}`))
+		if _, err := w.Write([]byte(`{"status":"ok"}`)); err != nil {
+			h.logger.Error("failed to write health response",
+				"error", err,
+				"path", r.URL.Path,
+			)
+		}
 	}
 }
 
@@ -141,6 +146,11 @@ func (h *Handler) handleHealth() http.HandlerFunc {
 func (h *Handler) handleReady() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"status":"ok"}`))
+		if _, err := w.Write([]byte(`{"status":"ok"}`)); err != nil {
+			h.logger.Error("failed to write ready response",
+				"error", err,
+				"path", r.URL.Path,
+			)
+		}
 	}
 }
