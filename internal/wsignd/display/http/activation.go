@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/wrale/wrale-signage/api/types/v1alpha1"
 	"github.com/wrale/wrale-signage/internal/wsignd/display"
+	"github.com/wrale/wrale-signage/internal/wsignd/display/activation"
 	werrors "github.com/wrale/wrale-signage/internal/wsignd/errors"
 )
 
@@ -139,7 +140,7 @@ func (h *Handler) ActivateDeviceCode(w http.ResponseWriter, r *http.Request) {
 		)
 
 		status := http.StatusInternalServerError
-		if err == display.ErrCodeNotFound || err == display.ErrCodeExpired {
+		if err == activation.ErrCodeNotFound || err == activation.ErrCodeExpired {
 			status = http.StatusNotFound
 		}
 		writeJSONError(w, werrors.NewError("NOT_FOUND", "activation code not found", "ActivateDeviceCode", err), status, logger)

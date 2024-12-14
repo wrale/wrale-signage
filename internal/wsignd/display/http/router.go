@@ -1,11 +1,11 @@
 package http
 
 import (
+	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/wrale/wrale-signage/internal/wsignd/ratelimit"
 )
 
 const (
@@ -32,14 +32,6 @@ func (h *Handler) Router() chi.Router {
 	r.Use(recoverMiddleware(h.logger))
 	r.Use(logMiddleware(h.logger))
 
-	// Initialize rate limiters with consistent error handling
-	limiter := func(limitType string) func(http.Handler) http.Handler {
-		return rateLimitMiddleware(h.ratelimit, h.logger, ratelimit.RateLimitOptions{
-			LimitType:   limitType,
-			WaitOnLimit: limitType == "api_request", // Only wait on API requests
-		})
-	}
-
 	// Mount all display endpoints under /api/v1alpha1/displays
 	r.Route("/api/v1alpha1/displays", func(r chi.Router) {
 		// Health check endpoints (no rate limiting or auth)
@@ -51,7 +43,7 @@ func (h *Handler) Router() chi.Router {
 		// Device activation flow (public endpoints with rate limiting)
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.Timeout(publicTimeout))
-			r.Use(limiter("device_code"))
+			r.Use(h.rateLimitDeviceCode())
 
 			r.Post("/device/code", h.RequestDeviceCode)
 			r.Post("/activate", h.ActivateDeviceCode)
@@ -61,7 +53,7 @@ func (h *Handler) Router() chi.Router {
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.Timeout(privateTimeout))
 			r.Use(authMiddleware(h.auth, h.logger))
-			r.Use(limiter("api_request"))
+			r.Use(h.rateLimitAPIRequest())
 
 			// Display management endpoints
 			r.Get("/{id}", h.GetDisplay)
@@ -69,10 +61,10 @@ func (h *Handler) Router() chi.Router {
 			r.Put("/{id}/last-seen", h.UpdateLastSeen)
 
 			// Content events (separate rate limit)
-			r.With(limiter("content_events")).Post("/events", h.HandleContentEvents)
+			r.With(h.rateLimitContentEvents()).Post("/events", h.HandleContentEvents)
 
 			// WebSocket endpoint (separate rate limit)
-			r.With(limiter("ws_connection")).Get("/ws", h.ServeWebSocket)
+			r.With(h.rateLimitWebSocket()).Get("/ws", h.ServeWebSocket)
 		})
 	})
 
