@@ -214,8 +214,8 @@ y: ## Run all checks and copy output to clipboard while displaying
 	@{ make all 2>&1; } | $(COPY_TO_CLIPBOARD)
 
 z: ## Copy 4 most recent git log messages to clipboard while displaying
-	@echo "==> Copying 4 most recent git log messages and copying output..."
-	@{ git log -n4 2>&1; } | $(COPY_TO_CLIPBOARD)
+	@echo "==> Copying 8 most recent git log messages and copying output..."
+	@{ git log -n8 2>&1; } | $(COPY_TO_CLIPBOARD)
 
 docker-run-server: ## Run server container
 	@echo "==> Running server container"

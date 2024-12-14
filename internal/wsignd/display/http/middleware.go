@@ -27,11 +27,10 @@ const (
 
 // common error responses
 var (
-	errInvalidRequest = NewOAuthInvalidRequestError("Invalid request", nil)
-	errExpiredToken   = NewOAuthInvalidTokenError("Token expired", nil)
-	errSlowDown       = NewOAuthSlowDownError(nil)
-	errServerError    = NewOAuthServerError("Internal server error", nil)
-	errUnauthorized   = NewOAuthError(OAuthErrInvalidClient, "Authentication required", http.StatusUnauthorized, werrors.ErrUnauthorized)
+	errExpiredToken = NewOAuthInvalidTokenError("Token expired", nil)
+	errSlowDown     = NewOAuthSlowDownError(nil)
+	errServerError  = NewOAuthServerError("Internal server error", nil)
+	errUnauthorized = NewOAuthError(OAuthErrInvalidClient, "Authentication required", http.StatusUnauthorized, werrors.ErrUnauthorized)
 )
 
 // GetDisplayID retrieves the authenticated display ID from context
