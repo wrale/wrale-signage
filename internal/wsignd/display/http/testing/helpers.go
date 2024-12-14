@@ -269,8 +269,7 @@ func mockCallString(call mock.Call) string {
 	for i, arg := range call.Arguments {
 		switch v := arg.(type) {
 		case mock.AnythingOfTypeArgument:
-			// Use String() method to get the type safely
-			args[i] = fmt.Sprintf("any(%s)", v.String())
+			args[i] = fmt.Sprintf("any(%v)", v.String())
 		case fmt.Stringer:
 			args[i] = fmt.Sprintf("matches(%s)", v.String())
 		case nil:
