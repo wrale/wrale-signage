@@ -17,62 +17,114 @@ const (
 	maxRequestBodySize = 1 << 20 // 1MB
 )
 
-// RequestDeviceCode handles device code generation
+// OAuth 2.0 Device Flow error codes
+const (
+	errAccessDenied         = "access_denied"
+	errAuthorizationPending = "authorization_pending"
+	errExpiredToken         = "expired_token"
+	errSlowDown             = "slow_down"
+	errInvalidRequest       = "invalid_request"
+	errInvalidGrant         = "invalid_grant"
+	errInvalidClient        = "invalid_client"
+	errServerError          = "server_error"
+)
+
+// writeOAuthError writes an OAuth 2.0 compliant error response
+func writeOAuthError(w http.ResponseWriter, code string, description string, status int, logger *slog.Logger) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+
+	response := struct {
+		Error            string `json:"error"`
+		ErrorDescription string `json:"error_description,omitempty"`
+	}{
+		Error:            code,
+		ErrorDescription: description,
+	}
+
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		logger.Error("failed to encode error response",
+			"error", err,
+			"originalError", code,
+		)
+	}
+}
+
+// RequestDeviceCode handles device code generation according to OAuth 2.0 Device Authorization Grant
 func (h *Handler) RequestDeviceCode(w http.ResponseWriter, r *http.Request) {
 	reqID := middleware.GetReqID(r.Context())
-	h.logger.Info("handling device code request",
-		"requestID", reqID,
+	logger := h.logger.With("requestID", reqID)
+
+	logger.Info("handling device code request",
 		"remoteAddr", r.RemoteAddr,
 	)
 
 	code, err := h.activation.GenerateCode(r.Context())
 	if err != nil {
-		h.logger.Error("failed to generate device code",
-			"error", err,
-			"requestID", reqID,
-		)
-		writeJSONError(w, werrors.NewError("GENERATION_FAILED", "failed to generate device code", "RequestDeviceCode", err), http.StatusInternalServerError, h.logger)
+		logger.Error("failed to generate device code", "error", err)
+		writeOAuthError(w, errServerError, "Failed to generate device code", http.StatusInternalServerError, logger)
 		return
 	}
 
+	// Complete URI includes the code for better UX
+	verificationURI := "/api/v1alpha1/displays/activate"
+	verificationURIComplete := verificationURI + "?code=" + code.UserCode
+
 	resp := &v1alpha1.DeviceCodeResponse{
-		DeviceCode:      code.DeviceCode,
-		UserCode:        code.UserCode,
-		ExpiresIn:       int(time.Until(code.ExpiresAt).Seconds()),
-		PollInterval:    code.PollInterval,
-		VerificationURI: "/api/v1alpha1/displays/activate",
+		DeviceCode:              code.DeviceCode,
+		UserCode:                code.UserCode,
+		ExpiresIn:               int(time.Until(code.ExpiresAt).Seconds()),
+		PollInterval:            code.PollInterval,
+		VerificationURI:         verificationURI,
+		VerificationURIComplete: verificationURIComplete,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
+
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		h.logger.Error("failed to encode response",
-			"error", err,
-			"requestID", reqID,
-		)
-		writeJSONError(w, werrors.NewError("ENCODING_ERROR", "failed to encode response", "RequestDeviceCode", err), http.StatusInternalServerError, h.logger)
+		logger.Error("failed to encode response", "error", err)
+		writeOAuthError(w, errServerError, "Failed to encode response", http.StatusInternalServerError, logger)
 		return
 	}
 }
 
-// validateActivationRequest performs initial validation of request body and required fields
+// validateActivationRequest performs validation according to OAuth 2.0 device flow
 func validateActivationRequest(body []byte) (*v1alpha1.DisplayRegistrationRequest, error) {
 	if len(body) == 0 {
-		return nil, werrors.NewError("INVALID_INPUT", "request body is required", "ActivateDeviceCode", nil)
+		return nil, werrors.NewError(errInvalidRequest, "Request body is required", "ActivateDeviceCode", nil)
 	}
 
 	var req v1alpha1.DisplayRegistrationRequest
 	if err := json.Unmarshal(body, &req); err != nil {
-		return nil, werrors.NewError("INVALID_INPUT", "invalid request body", "ActivateDeviceCode", err)
+		return nil, werrors.NewError(errInvalidRequest, "Invalid request format", "ActivateDeviceCode", err)
 	}
 
-	if req.ActivationCode == "" || req.Name == "" {
-		return nil, werrors.NewError("INVALID_INPUT", "activation code and display name are required", "ActivateDeviceCode", nil)
+	// Validate all required fields
+	if req.ActivationCode == "" {
+		return nil, werrors.NewError(errInvalidRequest, "Activation code is required", "ActivateDeviceCode", nil)
+	}
+
+	if req.Name == "" {
+		return nil, werrors.NewError(errInvalidRequest, "Display name is required", "ActivateDeviceCode", nil)
+	}
+
+	// Validate location fields
+	if req.Location.SiteID == "" {
+		return nil, werrors.NewError(errInvalidRequest, "Site ID is required", "ActivateDeviceCode", nil)
+	}
+	if req.Location.Zone == "" {
+		return nil, werrors.NewError(errInvalidRequest, "Zone is required", "ActivateDeviceCode", nil)
+	}
+	if req.Location.Position == "" {
+		return nil, werrors.NewError(errInvalidRequest, "Position is required", "ActivateDeviceCode", nil)
 	}
 
 	return &req, nil
 }
 
-// ActivateDeviceCode handles device activation by user code
+// ActivateDeviceCode handles device activation following OAuth 2.0 device flow
 func (h *Handler) ActivateDeviceCode(w http.ResponseWriter, r *http.Request) {
 	reqID := middleware.GetReqID(r.Context())
 	logger := h.logger.With(
@@ -85,20 +137,16 @@ func (h *Handler) ActivateDeviceCode(w http.ResponseWriter, r *http.Request) {
 
 	// Ensure request has a body
 	if r.Body == nil {
-		writeJSONError(w, werrors.NewError("INVALID_INPUT", "request body is required", "ActivateDeviceCode", nil), http.StatusBadRequest, logger)
+		writeOAuthError(w, errInvalidRequest, "Request body is required", http.StatusBadRequest, logger)
 		return
 	}
 
 	// Read request body with size limit
-	var body []byte
-	var err error
-
-	// Create temporary buffer for reading
 	tempBody := http.MaxBytesReader(w, r.Body, maxRequestBodySize)
-	body, err = io.ReadAll(tempBody)
+	body, err := io.ReadAll(tempBody)
 	if err != nil {
 		logger.Error("failed to read request body", "error", err)
-		writeJSONError(w, werrors.NewError("INVALID_INPUT", "failed to read request body", "ActivateDeviceCode", err), http.StatusBadRequest, logger)
+		writeOAuthError(w, errInvalidRequest, "Request too large or malformed", http.StatusBadRequest, logger)
 		return
 	}
 	defer r.Body.Close()
@@ -106,12 +154,12 @@ func (h *Handler) ActivateDeviceCode(w http.ResponseWriter, r *http.Request) {
 	// Validate request
 	req, err := validateActivationRequest(body)
 	if err != nil {
-		logger.Error("invalid request",
-			"error", err,
-			"activationCode", "",
-			"name", "",
-		)
-		writeJSONError(w, err, http.StatusBadRequest, logger)
+		logger.Error("invalid request", "error", err)
+		if werr, ok := err.(*werrors.Error); ok {
+			writeOAuthError(w, werr.Code, werr.Message, http.StatusBadRequest, logger)
+		} else {
+			writeOAuthError(w, errInvalidRequest, "Invalid request", http.StatusBadRequest, logger)
+		}
 		return
 	}
 
@@ -130,32 +178,36 @@ func (h *Handler) ActivateDeviceCode(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		logger.Error("failed to register display", "error", err)
 
-		var status int
 		switch err.(type) {
 		case display.ErrExists:
-			status = http.StatusConflict
-		case display.ErrInvalidName, display.ErrInvalidLocation:
-			status = http.StatusBadRequest
+			writeOAuthError(w, errInvalidRequest, "Display name already in use", http.StatusConflict, logger)
+		case display.ErrInvalidName:
+			writeOAuthError(w, errInvalidRequest, "Invalid display name", http.StatusBadRequest, logger)
+		case display.ErrInvalidLocation:
+			writeOAuthError(w, errInvalidRequest, "Invalid display location", http.StatusBadRequest, logger)
 		default:
-			status = http.StatusInternalServerError
+			writeOAuthError(w, errServerError, "Registration failed", http.StatusInternalServerError, logger)
 		}
-
-		writeJSONError(w, err, status, logger)
 		return
 	}
 
-	// Now activate the device code with display ID
+	// Activate the device code
 	if err := h.activation.ActivateCode(r.Context(), req.ActivationCode, d.ID); err != nil {
 		logger.Error("failed to activate device code",
 			"error", err,
 			"displayID", d.ID,
 		)
 
-		status := http.StatusInternalServerError
-		if err == activation.ErrCodeNotFound || err == activation.ErrCodeExpired {
-			status = http.StatusNotFound
+		switch err {
+		case activation.ErrCodeNotFound:
+			writeOAuthError(w, errInvalidGrant, "Invalid activation code", http.StatusBadRequest, logger)
+		case activation.ErrCodeExpired:
+			writeOAuthError(w, errExpiredToken, "Activation code expired", http.StatusBadRequest, logger)
+		case activation.ErrAlreadyActive:
+			writeOAuthError(w, errInvalidGrant, "Code already activated", http.StatusConflict, logger)
+		default:
+			writeOAuthError(w, errServerError, "Activation failed", http.StatusInternalServerError, logger)
 		}
-		writeJSONError(w, werrors.NewError("NOT_FOUND", "activation code not found", "ActivateDeviceCode", err), status, logger)
 		return
 	}
 
@@ -166,10 +218,11 @@ func (h *Handler) ActivateDeviceCode(w http.ResponseWriter, r *http.Request) {
 			"error", err,
 			"displayID", d.ID,
 		)
-		writeJSONError(w, werrors.NewError("TOKEN_ERROR", "activation succeeded but token generation failed", "ActivateDeviceCode", err), http.StatusInternalServerError, logger)
+		writeOAuthError(w, errServerError, "Failed to generate tokens", http.StatusInternalServerError, logger)
 		return
 	}
 
+	// Build successful response
 	resp := &v1alpha1.DisplayRegistrationResponse{
 		Display: &v1alpha1.Display{
 			TypeMeta: v1alpha1.TypeMeta{
@@ -203,10 +256,14 @@ func (h *Handler) ActivateDeviceCode(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
+	// Set security headers
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
+
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		logger.Error("failed to encode response", "error", err)
-		writeJSONError(w, werrors.NewError("ENCODING_ERROR", "failed to encode response", "ActivateDeviceCode", err), http.StatusInternalServerError, logger)
+		writeOAuthError(w, errServerError, "Failed to encode response", http.StatusInternalServerError, logger)
 		return
 	}
 

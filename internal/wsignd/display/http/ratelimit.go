@@ -6,36 +6,55 @@ import (
 	"github.com/wrale/wrale-signage/internal/wsignd/ratelimit"
 )
 
-// Rate limit middleware helpers
+// All rate limit types used by the display HTTP handlers
+const (
+	RateLimitTypeDeviceCode    = "device_code"    // Device activation flow
+	RateLimitTypeAPIRequest    = "api_request"    // General API requests
+	RateLimitTypeContentEvents = "content_events" // Content health monitoring
+	RateLimitTypeWebSocket     = "ws_connection"  // WebSocket connections
+)
 
-// rateLimitDeviceCode returns rate limit middleware for device code endpoints
+// rateLimitDeviceCode handles rate limiting for device activation endpoints
 func (h *Handler) rateLimitDeviceCode() func(http.Handler) http.Handler {
 	return rateLimitMiddleware(h.ratelimit, h.logger, ratelimit.RateLimitOptions{
-		LimitType:   "device_code",
+		LimitType:   RateLimitTypeDeviceCode,
 		WaitOnLimit: false,
+		BurstSize:   1,
+		Rate:        5,    // 5 requests
+		Period:      3600, // per hour
 	})
 }
 
-// rateLimitAPIRequest returns rate limit middleware for general API endpoints
+// rateLimitAPIRequest handles rate limiting for general API endpoints
 func (h *Handler) rateLimitAPIRequest() func(http.Handler) http.Handler {
 	return rateLimitMiddleware(h.ratelimit, h.logger, ratelimit.RateLimitOptions{
-		LimitType:   "api_request",
-		WaitOnLimit: true,
+		LimitType:   RateLimitTypeAPIRequest,
+		WaitOnLimit: true, // Queue requests during bursts
+		BurstSize:   5,    // Allow small bursts
+		Rate:        300,  // 300 requests
+		Period:      3600, // per hour
+		WaitTimeout: 5000, // Wait up to 5 seconds
 	})
 }
 
-// rateLimitContentEvents returns rate limit middleware for content events
+// rateLimitContentEvents handles rate limiting for content health monitoring
 func (h *Handler) rateLimitContentEvents() func(http.Handler) http.Handler {
 	return rateLimitMiddleware(h.ratelimit, h.logger, ratelimit.RateLimitOptions{
-		LimitType:   "content_events",
+		LimitType:   RateLimitTypeContentEvents,
 		WaitOnLimit: false,
+		BurstSize:   10,   // Allow event bursts
+		Rate:        3600, // 3600 events
+		Period:      3600, // per hour (1/second average)
 	})
 }
 
-// rateLimitWebSocket returns rate limit middleware for WebSocket connections
+// rateLimitWebSocket handles rate limiting for WebSocket connections
 func (h *Handler) rateLimitWebSocket() func(http.Handler) http.Handler {
 	return rateLimitMiddleware(h.ratelimit, h.logger, ratelimit.RateLimitOptions{
-		LimitType:   "ws_connection",
+		LimitType:   RateLimitTypeWebSocket,
 		WaitOnLimit: false,
+		BurstSize:   1,    // No connection bursts
+		Rate:        60,   // 60 connections
+		Period:      3600, // per hour
 	})
 }
