@@ -28,25 +28,27 @@ const (
 	OAuthErrServerError          OAuthErrorType = "server_error"
 )
 
-// OAuth error responses for domain concepts aligned with RFC 6749 Section 5.2
+// Domain error codes for consistent error responses
 const (
-	OAuthErrDisplayNotFound = "NOT_FOUND"      // Used for domain code field
-	OAuthErrDisplayExists   = "ALREADY_EXISTS" // Used for domain code field
-	OAuthErrCodeNotFound    = "NOT_FOUND"      // Used for domain code field
-	OAuthErrCodeExpired     = "CODE_EXPIRED"   // Used for domain code field
-	OAuthErrRateLimited     = "RATE_LIMITED"   // Used for domain code field
+	ErrCodeNotFound        = "NOT_FOUND"
+	ErrCodeAlreadyExists   = "ALREADY_EXISTS"
+	ErrCodeInvalidInput    = "INVALID_INPUT"
+	ErrCodeRateLimited     = "RATE_LIMITED"
+	ErrCodeInvalidState    = "INVALID_STATE"
+	ErrCodeVersionMismatch = "VERSION_MISMATCH"
+	ErrCodeInvalidLocation = "INVALID_LOCATION"
+	ErrCodeInvalidName     = "INVALID_NAME"
 )
 
 // OAuthError represents an OAuth 2.0 error response with HTTP status
 type OAuthError struct {
-	Code        OAuthErrorType
-	Description string
-	Status      int
-	Cause       error  // Original error that caused this
-	DomainCode  string // Optional domain-specific error code
+	Code        OAuthErrorType `json:"error"`
+	Description string         `json:"error_description,omitempty"`
+	Status      int            `json:"-"`
+	Cause       error          `json:"-"`
+	DomainCode  string         `json:"code,omitempty"`
 }
 
-// Error implements the error interface with descriptive message
 func (e *OAuthError) Error() string {
 	if e.Cause != nil {
 		return e.Description + ": " + e.Cause.Error()
@@ -54,12 +56,11 @@ func (e *OAuthError) Error() string {
 	return e.Description
 }
 
-// Unwrap returns the underlying error for error chain support
 func (e *OAuthError) Unwrap() error {
 	return e.Cause
 }
 
-// NewOAuthError creates a new OAuth error with cause
+// NewOAuthError creates a new OAuth error without domain code
 func NewOAuthError(code OAuthErrorType, description string, status int, cause error) *OAuthError {
 	return &OAuthError{
 		Code:        code,
@@ -69,8 +70,8 @@ func NewOAuthError(code OAuthErrorType, description string, status int, cause er
 	}
 }
 
-// NewDomainError creates an OAuth error with domain error code
-func NewDomainError(code OAuthErrorType, domainCode string, description string, status int, cause error) *OAuthError {
+// NewDomainError creates an OAuth error with domain context
+func NewDomainError(code OAuthErrorType, domainCode, description string, status int, cause error) *OAuthError {
 	return &OAuthError{
 		Code:        code,
 		DomainCode:  domainCode,
@@ -80,11 +81,11 @@ func NewDomainError(code OAuthErrorType, domainCode string, description string, 
 	}
 }
 
-// Constructor helpers for common OAuth errors
+// Common OAuth error constructors
 func NewOAuthSlowDownError(cause error) *OAuthError {
 	return NewDomainError(OAuthErrSlowDown,
-		OAuthErrRateLimited,
-		"too many requests",
+		ErrCodeRateLimited,
+		"Rate limit exceeded",
 		http.StatusTooManyRequests,
 		cause)
 }
@@ -96,90 +97,79 @@ func NewOAuthInvalidRequestError(description string, cause error) *OAuthError {
 		cause)
 }
 
-func NewOAuthInvalidTokenError(description string, cause error) *OAuthError {
-	return NewOAuthError(OAuthErrExpiredToken,
+func NewOAuthUnauthorizedError(description string, cause error) *OAuthError {
+	return NewOAuthError(OAuthErrInvalidClient,
 		description,
 		http.StatusUnauthorized,
 		cause)
 }
 
-func NewOAuthServerError(description string, cause error) *OAuthError {
+func NewOAuthServerError(cause error) *OAuthError {
 	return NewOAuthError(OAuthErrServerError,
-		description,
+		"Internal server error",
 		http.StatusInternalServerError,
 		cause)
 }
 
-// writeError maps any error to an OAuth error response and writes it
+// writeError maps domain errors to OAuth responses
 func writeError(w http.ResponseWriter, err error, defaultStatus int, logger *slog.Logger) {
 	oauthErr := mapToOAuthError(err, defaultStatus)
 	writeOAuthResponse(w, oauthErr, logger)
 }
 
-// writeOAuthResponse writes a pre-constructed OAuth error response with proper headers
+// writeOAuthResponse writes a structured error response
 func writeOAuthResponse(w http.ResponseWriter, err *OAuthError, logger *slog.Logger) {
-	// Set security headers first
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Pragma", "no-cache")
 
-	// Set status code
 	w.WriteHeader(err.Status)
 
-	// Build OAuth-compliant response body with domain error support
+	// Use domain error info when available
 	response := struct {
-		Code        string `json:"code,omitempty"`              // Domain error code
-		Message     string `json:"message,omitempty"`           // Human readable message
-		Error       string `json:"error"`                       // OAuth error code
+		Error       string `json:"error"`                       // OAuth error type
 		Description string `json:"error_description,omitempty"` // OAuth description
+		Code        string `json:"code,omitempty"`              // Domain error code
+		Message     string `json:"message,omitempty"`           // Human message
 	}{
-		Error:       string(err.Code),
-		Description: err.Description,
+		Error: string(err.Code),
 	}
 
-	// Include domain error information when available
 	if err.DomainCode != "" {
 		response.Code = err.DomainCode
-		response.Message = err.Description
-		response.Description = "" // Avoid duplication
+		response.Message = err.Description // Use description as message
+	} else {
+		response.Description = err.Description
 	}
 
-	// Log and encode response
 	if encodeErr := json.NewEncoder(w).Encode(response); encodeErr != nil {
-		logger.Error("failed to write error response",
+		logger.Error("failed to encode error response",
 			"error", encodeErr,
-			"originalError", err,
-		)
+			"original_error", err)
 	}
 }
 
-// mapToOAuthError converts errors to OAuth-compliant responses following display domain rules
+// mapToOAuthError provides consistent error mapping
 func mapToOAuthError(err error, defaultStatus int) *OAuthError {
-	// Already an OAuth error
+	// Return existing OAuth errors
 	if oauthErr, ok := err.(*OAuthError); ok {
 		return oauthErr
 	}
 
-	// Handle rate limit errors first
+	// Handle rate limiting first
 	if errors.Is(err, ratelimit.ErrLimitExceeded) {
 		return NewOAuthSlowDownError(err)
 	}
 
-	// Handle authentication/authorization errors
-	if errors.Is(err, auth.ErrTokenExpired) {
-		return NewOAuthInvalidTokenError("Token expired", err)
-	}
-	if errors.Is(err, auth.ErrTokenInvalid) {
-		return NewOAuthError(OAuthErrInvalidClient, "Invalid token", http.StatusUnauthorized, err)
+	// Map authentication errors
+	if errors.Is(err, auth.ErrTokenExpired) || errors.Is(err, auth.ErrTokenInvalid) {
+		return NewOAuthUnauthorizedError("Invalid or expired token", err)
 	}
 
-	// Map core error types preserving messages
+	// Map core error types
 	switch {
 	case errors.Is(err, werrors.ErrUnauthorized):
-		return NewOAuthError(OAuthErrInvalidClient,
-			"Authentication required",
-			http.StatusUnauthorized,
-			err)
+		return NewOAuthUnauthorizedError("Authentication required", err)
 
 	case errors.Is(err, werrors.ErrForbidden):
 		return NewOAuthError(OAuthErrAccessDenied,
@@ -189,20 +179,20 @@ func mapToOAuthError(err error, defaultStatus int) *OAuthError {
 
 	case errors.Is(err, werrors.ErrNotFound):
 		return NewDomainError(OAuthErrInvalidRequest,
-			OAuthErrDisplayNotFound,
+			ErrCodeNotFound,
 			err.Error(),
 			http.StatusNotFound,
 			err)
 
 	case errors.Is(err, werrors.ErrInvalidInput):
 		return NewDomainError(OAuthErrInvalidRequest,
-			"INVALID_INPUT",
+			ErrCodeInvalidInput,
 			err.Error(),
 			http.StatusBadRequest,
 			err)
 	}
 
-	// Map display domain errors preserving messages
+	// Map display domain errors
 	var notFoundErr *display.ErrNotFound
 	var existsErr *display.ErrExists
 	var invalidStateErr *display.ErrInvalidState
@@ -213,74 +203,71 @@ func mapToOAuthError(err error, defaultStatus int) *OAuthError {
 	switch {
 	case errors.As(err, &notFoundErr):
 		return NewDomainError(OAuthErrInvalidRequest,
-			OAuthErrDisplayNotFound,
-			notFoundErr.Error(),
+			ErrCodeNotFound,
+			err.Error(),
 			http.StatusNotFound,
 			err)
 
 	case errors.As(err, &existsErr):
 		return NewDomainError(OAuthErrInvalidRequest,
-			OAuthErrDisplayExists,
-			existsErr.Error(),
+			ErrCodeAlreadyExists,
+			err.Error(),
 			http.StatusConflict,
 			err)
 
 	case errors.As(err, &invalidStateErr):
 		return NewDomainError(OAuthErrInvalidRequest,
-			"INVALID_STATE",
-			invalidStateErr.Error(),
+			ErrCodeInvalidState,
+			err.Error(),
 			http.StatusBadRequest,
 			err)
 
 	case errors.As(err, &invalidNameErr):
 		return NewDomainError(OAuthErrInvalidRequest,
-			"INVALID_NAME",
-			invalidNameErr.Error(),
+			ErrCodeInvalidName,
+			err.Error(),
 			http.StatusBadRequest,
 			err)
 
 	case errors.As(err, &invalidLocationErr):
 		return NewDomainError(OAuthErrInvalidRequest,
-			"INVALID_LOCATION",
-			invalidLocationErr.Error(),
+			ErrCodeInvalidLocation,
+			err.Error(),
 			http.StatusBadRequest,
 			err)
 
 	case errors.As(err, &versionMismatchErr):
 		return NewDomainError(OAuthErrInvalidRequest,
-			"VERSION_MISMATCH",
-			versionMismatchErr.Error(),
+			ErrCodeVersionMismatch,
+			err.Error(),
 			http.StatusConflict,
 			err)
 	}
 
-	// Map activation domain errors
+	// Map activation errors
 	switch {
 	case errors.Is(err, activation.ErrCodeNotFound):
 		return NewDomainError(OAuthErrInvalidGrant,
-			OAuthErrCodeNotFound,
-			"activation code not found",
+			ErrCodeNotFound,
+			"Activation code not found",
 			http.StatusNotFound,
 			err)
 
 	case errors.Is(err, activation.ErrCodeExpired):
 		return NewDomainError(OAuthErrExpiredToken,
-			OAuthErrCodeExpired,
-			"activation code expired",
+			ErrCodeNotFound,
+			"Activation code expired",
 			http.StatusBadRequest,
 			err)
 
 	case errors.Is(err, activation.ErrAlreadyActive):
 		return NewDomainError(OAuthErrInvalidGrant,
-			"ALREADY_ACTIVE",
+			ErrCodeAlreadyExists,
 			"Display already activated",
 			http.StatusConflict,
 			err)
 	}
 
-	// Default to server error for unhandled cases
-	return NewOAuthError(OAuthErrServerError,
-		"An unexpected error occurred",
-		defaultStatus,
-		err)
+	// Default server error
+	return NewOAuthServerError(err)
 }
