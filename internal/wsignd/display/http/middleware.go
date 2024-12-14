@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/wrale/wrale-signage/internal/wsignd/auth"
+	werrors "github.com/wrale/wrale-signage/internal/wsignd/errors"
 	"github.com/wrale/wrale-signage/internal/wsignd/ratelimit"
 )
 
@@ -30,6 +31,7 @@ var (
 	errExpiredToken   = NewOAuthInvalidTokenError("Token expired", nil)
 	errSlowDown       = NewOAuthSlowDownError(nil)
 	errServerError    = NewOAuthServerError("Internal server error", nil)
+	errUnauthorized   = NewOAuthError(OAuthErrInvalidClient, "Authentication required", http.StatusUnauthorized, werrors.ErrUnauthorized)
 )
 
 // GetDisplayID retrieves the authenticated display ID from context
@@ -158,38 +160,40 @@ func rateLimitMiddleware(service ratelimit.Service, logger *slog.Logger, options
 			reqID := middleware.GetReqID(r.Context())
 			reqLogger := logger.With("requestId", reqID)
 
-			// Apply rate limiting with proper error handling
-			defer func() {
-				if rvr := recover(); rvr != nil {
-					if limitErr, ok := rvr.(error); ok && errors.Is(limitErr, ratelimit.ErrLimitExceeded) {
-						// Get limit details
-						limit := service.GetLimit(options.LimitType)
-
-						// Calculate remaining requests and reset time
-						limitKey := ratelimit.LimitKey{
-							Type:     options.LimitType,
-							RemoteIP: r.RemoteAddr,
-						}
-
-						// Retrieve current status
-						remaining, resetTime := 0, time.Now().Add(limit.Period)
-						if status, err := service.Status(limitKey); err == nil {
-							remaining = status.Remaining
-							resetTime = status.Reset
-						}
-
-						// Set standard rate limit headers
-						w.Header().Set("RateLimit-Limit", fmt.Sprintf("%d", limit.Rate))
-						w.Header().Set("RateLimit-Remaining", fmt.Sprintf("%d", remaining))
-						w.Header().Set("RateLimit-Reset", fmt.Sprintf("%d", resetTime.Unix()))
-						w.Header().Set("Retry-After", fmt.Sprintf("%d", int(time.Until(resetTime).Seconds())))
-
-						writeError(w, errSlowDown, http.StatusTooManyRequests, reqLogger)
-						return
+			// Check rate limit first
+			err := service.Allow(r.Context(), ratelimit.LimitKey{
+				Type:     options.LimitType,
+				RemoteIP: r.RemoteAddr,
+			})
+			if err != nil {
+				if errors.Is(err, ratelimit.ErrLimitExceeded) {
+					// Get limit details and status
+					limit := service.GetLimit(options.LimitType)
+					key := ratelimit.LimitKey{
+						Type:     options.LimitType,
+						RemoteIP: r.RemoteAddr,
 					}
-					panic(rvr) // Re-panic if not a rate limit error
+
+					// Calculate remaining requests and reset time
+					remaining, resetTime := 0, time.Now().Add(limit.Period)
+					if status, err := service.Status(key); err == nil {
+						remaining = status.Remaining
+						resetTime = status.Reset
+					}
+
+					// Set standard rate limit headers
+					w.Header().Set("RateLimit-Limit", fmt.Sprintf("%d", limit.Rate))
+					w.Header().Set("RateLimit-Remaining", fmt.Sprintf("%d", remaining))
+					w.Header().Set("RateLimit-Reset", fmt.Sprintf("%d", resetTime.Unix()))
+					w.Header().Set("Retry-After", fmt.Sprintf("%d", int(time.Until(resetTime).Seconds())))
+
+					writeError(w, errSlowDown, http.StatusTooManyRequests, reqLogger)
+					return
 				}
-			}()
+				// Unexpected error
+				writeError(w, errServerError, http.StatusInternalServerError, reqLogger)
+				return
+			}
 
 			rateLimitNext.ServeHTTP(w, r)
 		})
@@ -207,13 +211,13 @@ func authMiddleware(authService auth.Service, logger *slog.Logger) func(next htt
 			// Extract and validate bearer token
 			authHeader := r.Header.Get("Authorization")
 			if authHeader == "" {
-				writeError(w, errInvalidRequest, http.StatusUnauthorized, reqLogger)
+				writeError(w, errUnauthorized, http.StatusUnauthorized, reqLogger)
 				return
 			}
 
 			parts := strings.Split(authHeader, " ")
 			if len(parts) != 2 || parts[0] != "Bearer" {
-				writeError(w, errInvalidRequest, http.StatusUnauthorized, reqLogger)
+				writeError(w, errUnauthorized, http.StatusUnauthorized, reqLogger)
 				return
 			}
 
@@ -222,10 +226,13 @@ func authMiddleware(authService auth.Service, logger *slog.Logger) func(next htt
 			if err != nil {
 				// Map common auth errors
 				var oauthErr *OAuthError
-				if errors.Is(err, auth.ErrTokenExpired) {
+				switch {
+				case errors.Is(err, auth.ErrTokenExpired):
 					oauthErr = errExpiredToken
-				} else {
-					oauthErr = errInvalidRequest
+				case errors.Is(err, auth.ErrTokenInvalid):
+					oauthErr = errUnauthorized
+				default:
+					oauthErr = errUnauthorized
 				}
 
 				writeError(w, oauthErr, http.StatusUnauthorized, reqLogger)
