@@ -52,7 +52,8 @@ func TestStatusEndpoints(t *testing.T) {
 			needsAuth:  true, // Protected routes require auth
 			wantStatus: http.StatusNotFound,
 			wantBody: map[string]interface{}{
-				"error": "not found",
+				"code":    "NOT_FOUND",
+				"message": "display not found: invalid",
 			},
 			setupAuth:      true,
 			setupRateLimit: true,

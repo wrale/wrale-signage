@@ -83,22 +83,34 @@ func (h *Handler) ActivateDeviceCode(w http.ResponseWriter, r *http.Request) {
 
 	logger.Info("activating display")
 
-	// Enforce request body size limit
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
-	defer r.Body.Close()
+	// Ensure request has a body
+	if r.Body == nil {
+		writeJSONError(w, werrors.NewError("INVALID_INPUT", "request body is required", "ActivateDeviceCode", nil), http.StatusBadRequest, logger)
+		return
+	}
 
-	// Read request body
-	body, err := io.ReadAll(r.Body)
+	// Read request body with size limit
+	var body []byte
+	var err error
+
+	// Create temporary buffer for reading
+	tempBody := http.MaxBytesReader(w, r.Body, maxRequestBodySize)
+	body, err = io.ReadAll(tempBody)
 	if err != nil {
 		logger.Error("failed to read request body", "error", err)
 		writeJSONError(w, werrors.NewError("INVALID_INPUT", "failed to read request body", "ActivateDeviceCode", err), http.StatusBadRequest, logger)
 		return
 	}
+	defer r.Body.Close()
 
 	// Validate request
 	req, err := validateActivationRequest(body)
 	if err != nil {
-		logger.Error("invalid request", "error", err)
+		logger.Error("invalid request",
+			"error", err,
+			"activationCode", "",
+			"name", "",
+		)
 		writeJSONError(w, err, http.StatusBadRequest, logger)
 		return
 	}
