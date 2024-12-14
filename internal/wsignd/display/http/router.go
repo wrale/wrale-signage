@@ -33,6 +33,9 @@ func (h *Handler) Router() chi.Router {
 
 	// Mount all display endpoints under /api/v1alpha1/displays
 	r.Route("/api/v1alpha1/displays", func(r chi.Router) {
+		// Apply CORS middleware to all API endpoints
+		r.Use(corsMiddleware)
+
 		// Health check endpoints (no rate limiting or auth)
 		r.Group(func(r chi.Router) {
 			r.Get("/healthz", h.handleHealth())
