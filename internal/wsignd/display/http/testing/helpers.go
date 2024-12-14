@@ -151,33 +151,47 @@ func WriteJSON(w http.ResponseWriter, status int, v interface{}) error {
 
 // SetupRateLimitBypass configures rate limit mock to allow all requests
 func (th *TestHandler) SetupRateLimitBypass() {
-	// Default rate limit configuration
+	// Default rate limit configuration that allows traffic
 	limit := ratelimit.Limit{
-		Rate:      100,
+		Rate:        100,
+		Period:      time.Minute,
+		BurstSize:   10,
+		WaitTimeout: time.Second,
+	}
+
+	// Default status showing available capacity
+	status := &ratelimit.LimitStatus{
+		Limit:     limit,
+		Remaining: 95,
+		Reset:     time.Now().Add(time.Minute),
 		Period:    time.Minute,
-		BurstSize: 10,
 	}
 
-	// Set up rate limit lookups for each type with specific expectations
+	// Set up expectations for each rate limit type
 	for limitType := range validRateLimitTypes {
+		// GetLimit returns the default limit
 		th.RateLimit.On("GetLimit", limitType).Return(limit).Maybe()
+
+		// Status returns success status with available capacity
+		th.RateLimit.On("Status", mock.MatchedBy(func(key ratelimit.LimitKey) bool {
+			return key.Type == limitType
+		})).Return(status, nil).Maybe()
+
+		// Allow always succeeds
+		th.RateLimit.On("Allow", mock.Anything, mock.MatchedBy(func(key ratelimit.LimitKey) bool {
+			return key.Type == limitType
+		})).Return(nil).Maybe()
 	}
 
-	// Set up allow checks with precise rate limit key validation
-	th.RateLimit.On("Allow", mock.Anything, mock.MatchedBy(func(key ratelimit.LimitKey) bool {
-		// Validate that the rate limit type is known
-		_, ok := validRateLimitTypes[key.Type]
-		if !ok {
-			th.t.Logf("Unknown rate limit type encountered: %s", key.Type)
-		}
-		return ok
-	})).Return(nil).Maybe()
+	// Set up default expectations for any unmatched calls
+	th.RateLimit.On("Status", mock.Anything).Return(status, nil).Maybe()
+	th.RateLimit.On("Allow", mock.Anything, mock.Anything).Return(nil).Maybe()
 }
 
 // SetupAuthBypass configures auth service mock to bypass token validation
 func (th *TestHandler) SetupAuthBypass() {
 	testDisplayID, _ := uuid.Parse(testDisplayIDStr)
-	// Accept any token in tests, but capture it for debugging
+	// Accept any token in tests, but validate it's not empty
 	th.Auth.On("ValidateAccessToken", mock.Anything, mock.MatchedBy(func(token string) bool {
 		if token == "" {
 			th.t.Log("Empty token received in auth validation")
@@ -198,62 +212,70 @@ func (th *TestHandler) ValidateJSON(body []byte) (map[string]interface{}, error)
 
 // CleanupTest performs cleanup after each test
 func (th *TestHandler) CleanupTest() {
-	// Add debug logging for mock verification
 	verifyMock := func(m *mock.Mock, name string) {
-		// Use built-in expectation verification
 		if !m.AssertExpectations(th.t) {
 			th.t.Logf("Failed expectations for %s mock:", name)
-			// Log unmet expectations
-			for _, call := range m.ExpectedCalls {
-				// Only log if the call wasn't matched
-				matched := false
-				for _, actual := range m.Calls {
-					if call.Method == actual.Method {
-						matched = true
-						break
-					}
-				}
-				if !matched {
-					th.t.Logf("  Expected call not matched: %s(%s)", call.Method, formatArgs(call.Arguments))
-				}
-			}
-
-			// Log actual calls for comparison
-			if len(m.Calls) > 0 {
-				th.t.Log("  Actual calls made:")
-				for _, call := range m.Calls {
-					th.t.Logf("    - %s(%s)", call.Method, formatArgs(call.Arguments))
-				}
-			}
+			printUnmetExpectations(th.t, m, name)
 		}
 	}
 
-	// Verify all mocks with debug support
+	// Verify all mocks with improved debugging
 	verifyMock(&th.Service.Mock, "Service")
 	verifyMock(&th.Activation.Mock, "Activation")
 	verifyMock(&th.Auth.Mock, "Auth")
 	verifyMock(&th.RateLimit.Mock, "RateLimit")
 }
 
-// formatArgs converts mock arguments to a readable string
-func formatArgs(args []interface{}) string {
-	if len(args) == 0 {
-		return ""
+// printUnmetExpectations prints detailed information about unmet expectations
+func printUnmetExpectations(t *testing.T, m *mock.Mock, name string) {
+	// Track which expected calls were matched
+	matched := make(map[string]bool)
+	for _, call := range m.Calls {
+		matched[mockCallString(call)] = true
 	}
 
-	formatted := make([]string, len(args))
-	for i, arg := range args {
-		switch v := arg.(type) {
-		case mock.AnythingOfTypeArgument:
-			formatted[i] = fmt.Sprintf("any %v", v)
-		case interface{ String() string }:
-			formatted[i] = fmt.Sprintf("matches(%s)", v.String())
-		case nil:
-			formatted[i] = "nil"
-		default:
-			formatted[i] = fmt.Sprintf("%v", v)
+	// Find and report unmet expectations
+	unmet := []string{}
+	for _, exp := range m.ExpectedCalls {
+		callStr := mockCallString(mock.Call{
+			Method:    exp.Method,
+			Arguments: exp.Arguments,
+		})
+		if !matched[callStr] {
+			unmet = append(unmet, callStr)
 		}
 	}
 
-	return fmt.Sprintf("%v", formatted)
+	if len(unmet) > 0 {
+		t.Logf("Unmet expectations for %s:", name)
+		for _, call := range unmet {
+			t.Logf("  - %s", call)
+		}
+	}
+
+	// Log actual calls for comparison
+	if len(m.Calls) > 0 {
+		t.Logf("Actual calls to %s:", name)
+		for _, call := range m.Calls {
+			t.Logf("  - %s", mockCallString(call))
+		}
+	}
+}
+
+// mockCallString formats a mock call for logging
+func mockCallString(call mock.Call) string {
+	args := make([]string, len(call.Arguments))
+	for i, arg := range call.Arguments {
+		switch v := arg.(type) {
+		case mock.AnythingOfTypeArgument:
+			args[i] = fmt.Sprintf("any(%s)", v.Type)
+		case fmt.Stringer:
+			args[i] = fmt.Sprintf("matches(%s)", v.String())
+		case nil:
+			args[i] = "nil"
+		default:
+			args[i] = fmt.Sprintf("%v", v)
+		}
+	}
+	return fmt.Sprintf("%s(%s)", call.Method, args)
 }
