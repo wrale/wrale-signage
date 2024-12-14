@@ -1,12 +1,15 @@
 package http
 
 import (
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/google/uuid"
+	"github.com/wrale/wrale-signage/api/types/v1alpha1"
 	"github.com/wrale/wrale-signage/internal/wsignd/auth"
 	"github.com/wrale/wrale-signage/internal/wsignd/display"
 	"github.com/wrale/wrale-signage/internal/wsignd/display/activation"
@@ -20,6 +23,7 @@ type Handler struct {
 	auth       auth.Service
 	ratelimit  ratelimit.Service
 	logger     *slog.Logger
+	hub        *Hub
 }
 
 // NewHandler creates a new HTTP handler for display endpoints
@@ -30,17 +34,23 @@ func NewHandler(
 	ratelimit ratelimit.Service,
 	logger *slog.Logger,
 ) *Handler {
-	return &Handler{
+	h := &Handler{
 		service:    service,
 		activation: activation,
 		auth:       auth,
 		ratelimit:  ratelimit,
 		logger:     logger,
 	}
+
+	// Initialize hub
+	h.hub = newHub(ratelimit, logger)
+	go h.hub.run(context.Background())
+
+	return h
 }
 
 // Router returns the HTTP router for display endpoints
-func (h *Handler) Router() http.Handler {
+func (h *Handler) Router() chi.Router {
 	r := chi.NewRouter()
 
 	// Add common middleware
@@ -88,6 +98,35 @@ func (h *Handler) Router() http.Handler {
 	})
 
 	return r
+}
+
+// HandleContentEvents handles content playback and error events from displays
+func (h *Handler) HandleContentEvents(w http.ResponseWriter, r *http.Request) {
+	var events []v1alpha1.ContentEvent
+	if err := json.NewDecoder(r.Body).Decode(&events); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Get authenticated display ID from context
+	displayID, ok := GetDisplayID(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// TODO: Process events through content service
+	h.logger.Info("received content events",
+		"displayId", displayID,
+		"eventCount", len(events),
+	)
+
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// ServeWebSocket upgrades the HTTP connection to WebSocket
+func (h *Handler) ServeWebSocket(w http.ResponseWriter, r *http.Request) {
+	h.ServeWs(w, r)
 }
 
 // handleHealth returns basic health check status

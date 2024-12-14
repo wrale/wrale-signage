@@ -42,6 +42,71 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
+// Hub maintains the set of active connections and broadcasts messages
+type Hub struct {
+	// Registered connections
+	connections map[*connection]bool
+
+	// Register requests from the connections
+	register chan *connection
+
+	// Unregister requests from connections
+	unregister chan *connection
+
+	// Inbound messages from the connections
+	broadcast chan []byte
+
+	// Rate limiting service
+	rateLimit ratelimit.Service
+
+	// Logger instance
+	logger *slog.Logger
+}
+
+func newHub(rateLimit ratelimit.Service, logger *slog.Logger) *Hub {
+	return &Hub{
+		broadcast:   make(chan []byte),
+		register:    make(chan *connection),
+		unregister:  make(chan *connection),
+		connections: make(map[*connection]bool),
+		rateLimit:   rateLimit,
+		logger:      logger,
+	}
+}
+
+func (h *Hub) run(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case c := <-h.register:
+			h.connections[c] = true
+			h.logger.Info("display connected",
+				"displayId", c.displayID,
+				"connections", len(h.connections),
+			)
+		case c := <-h.unregister:
+			if _, ok := h.connections[c]; ok {
+				delete(h.connections, c)
+				close(c.send)
+				h.logger.Info("display disconnected",
+					"displayId", c.displayID,
+					"connections", len(h.connections),
+				)
+			}
+		case m := <-h.broadcast:
+			for c := range h.connections {
+				select {
+				case c.send <- m:
+				default:
+					close(c.send)
+					delete(h.connections, c)
+				}
+			}
+		}
+	}
+}
+
 // connection is an middleman between the websocket connection and the hub
 type connection struct {
 	displayID uuid.UUID
@@ -210,87 +275,6 @@ func (c *connection) writePump() {
 	}
 }
 
-// Hub maintains the set of active connections and broadcasts messages
-type Hub struct {
-	// Registered connections
-	connections map[*connection]bool
-
-	// Register requests from the connections
-	register chan *connection
-
-	// Unregister requests from connections
-	unregister chan *connection
-
-	// Inbound messages from the connections
-	broadcast chan []byte
-
-	// Rate limiting service
-	rateLimit ratelimit.Service
-
-	// Logger instance
-	logger *slog.Logger
-}
-
-func newHub(rateLimit ratelimit.Service, logger *slog.Logger) *Hub {
-	return &Hub{
-		broadcast:   make(chan []byte),
-		register:    make(chan *connection),
-		unregister:  make(chan *connection),
-		connections: make(map[*connection]bool),
-		rateLimit:   rateLimit,
-		logger:      logger,
-	}
-}
-
-func (h *Hub) run(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case c := <-h.register:
-			h.connections[c] = true
-			h.logger.Info("display connected",
-				"displayId", c.displayID,
-				"connections", len(h.connections),
-			)
-		case c := <-h.unregister:
-			if _, ok := h.connections[c]; ok {
-				delete(h.connections, c)
-				close(c.send)
-				h.logger.Info("display disconnected",
-					"displayId", c.displayID,
-					"connections", len(h.connections),
-				)
-			}
-		case m := <-h.broadcast:
-			for c := range h.connections {
-				select {
-				case c.send <- m:
-				default:
-					close(c.send)
-					delete(h.connections, c)
-				}
-			}
-		}
-	}
-}
-
-// convert converts between domain and API display states
-func convert(s display.State) v1alpha1.DisplayState {
-	switch s {
-	case display.StateUnregistered:
-		return v1alpha1.DisplayStateUnregistered
-	case display.StateActive:
-		return v1alpha1.DisplayStateActive
-	case display.StateOffline:
-		return v1alpha1.DisplayStateOffline
-	case display.StateDisabled:
-		return v1alpha1.DisplayStateDisabled
-	default:
-		return v1alpha1.DisplayStateOffline
-	}
-}
-
 // ServeWs handles websocket requests from displays
 func (h *Handler) ServeWs(w http.ResponseWriter, r *http.Request) {
 	// Get authenticated display ID from context (set by auth middleware)
@@ -345,10 +329,26 @@ func (h *Handler) ServeWs(w http.ResponseWriter, r *http.Request) {
 		writeLimitKey: writeKey,
 	}
 
-	c.hub.register <- c
+	h.hub.register <- c
 
 	go c.writePump()
 	c.readPump()
+}
+
+// convert converts between domain and API display states
+func convert(s display.State) v1alpha1.DisplayState {
+	switch s {
+	case display.StateUnregistered:
+		return v1alpha1.DisplayStateUnregistered
+	case display.StateActive:
+		return v1alpha1.DisplayStateActive
+	case display.StateOffline:
+		return v1alpha1.DisplayStateOffline
+	case display.StateDisabled:
+		return v1alpha1.DisplayStateDisabled
+	default:
+		return v1alpha1.DisplayStateOffline
+	}
 }
 
 // SendControlMessage sends a control message to a specific display
