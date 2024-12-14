@@ -3,6 +3,7 @@ package mocks
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/wrale/wrale-signage/internal/wsignd/config"
@@ -64,12 +65,14 @@ func (m *RateLimitService) Status(key ratelimit.LimitKey) (*ratelimit.LimitStatu
 	return status, args.Error(1)
 }
 
-// DefaultStatus creates a default success status for testing
+// DefaultStatus creates a default success status for testing.
+// It properly calculates the reset time as current time plus the rate limit period,
+// matching the behavior of the real implementation.
 func DefaultStatus(limit ratelimit.Limit, remaining int) *ratelimit.LimitStatus {
 	return &ratelimit.LimitStatus{
 		Limit:     limit,
 		Remaining: remaining,
-		Reset:     limit.Period,
+		Reset:     time.Now().Add(limit.Period), // Calculate actual reset time
 		Period:    limit.Period,
 	}
 }
