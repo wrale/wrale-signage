@@ -27,68 +27,42 @@ func NewService(store Store, logger *slog.Logger) Service {
 	}
 }
 
-// RegisterConfiguredLimits sets up rate limits from configuration
-func (s *RateLimitService) RegisterConfiguredLimits(cfg config.RateLimitConfig) {
-	var errs []error
-
-	// Token rate limits
-	if err := s.RegisterLimit("token_refresh", Limit{
-		Rate:        cfg.API.TokenRefreshPerHour,
-		Period:      time.Hour,
-		BurstSize:   cfg.API.RefreshBurstSize,
-		WaitTimeout: 0, // No waiting for tokens
-	}); err != nil {
-		errs = append(errs, fmt.Errorf("token_refresh: %w", err))
+// Status returns the current remaining requests and reset time for a key
+func (s *RateLimitService) Status(key LimitKey) (remaining int, reset time.Time, err error) {
+	if key.Type == "" {
+		return 0, time.Time{}, ErrInvalidKey
 	}
 
-	// API rate limits
-	if err := s.RegisterLimit("api_request", Limit{
-		Rate:        cfg.API.RequestsPerMinute,
-		Period:      time.Minute,
-		BurstSize:   cfg.API.BurstSize,
-		WaitTimeout: cfg.Settings.MaxWaitTime,
-	}); err != nil {
-		errs = append(errs, fmt.Errorf("api_request: %w", err))
+	// Get the configured limit
+	limit := s.GetLimit(key.Type)
+	if limit.Rate == 0 {
+		// If no limit configured, return "infinite" remaining
+		return -1, time.Now().Add(limit.Period), nil
 	}
 
-	// Device code limits
-	if err := s.RegisterLimit("device_code", Limit{
-		Rate:        cfg.API.DeviceCodePerInterval,
-		Period:      cfg.API.DeviceCodeInterval,
-		BurstSize:   0, // No bursts for security
-		WaitTimeout: 0, // No waiting
-	}); err != nil {
-		errs = append(errs, fmt.Errorf("device_code: %w", err))
-	}
-
-	// WebSocket limits
-	if err := s.RegisterLimit("ws_connection", Limit{
-		Rate:        cfg.WebSocket.MessagesPerMinute,
-		Period:      time.Minute,
-		BurstSize:   cfg.WebSocket.BurstSize,
-		WaitTimeout: cfg.Settings.MaxWaitTime,
-	}); err != nil {
-		errs = append(errs, fmt.Errorf("ws_connection: %w", err))
-	}
-
-	if len(errs) > 0 {
-		s.logger.Error("failed to register rate limits",
-			"errors", errs,
+	// Get current count from store
+	count, err := s.store.GetCount(context.Background(), key)
+	if err != nil {
+		s.logger.Error("failed to get rate limit count",
+			"error", err,
+			"type", key.Type,
+			"token", key.Token,
+			"endpoint", key.Endpoint,
 		)
-	}
-}
-
-// RegisterLimit adds or updates a rate limit configuration
-func (s *RateLimitService) RegisterLimit(limitType string, limit Limit) error {
-	if limit.Rate <= 0 || limit.Period <= 0 {
-		return ErrInvalidLimit
+		return 0, time.Time{}, err
 	}
 
-	s.limitsM.Lock()
-	defer s.limitsM.Unlock()
+	// Calculate remaining and next reset time
+	remaining = limit.Rate - count
+	if remaining < 0 {
+		remaining = 0
+	}
 
-	s.limits[limitType] = limit
-	return nil
+	// Calculate when this window resets
+	// Note: This is an approximation based on the Period
+	reset = time.Now().Add(limit.Period)
+
+	return remaining, reset, nil
 }
 
 // Allow checks if an operation should be allowed
@@ -156,48 +130,115 @@ func (s *RateLimitService) Reset(ctx context.Context, key LimitKey) error {
 	return nil
 }
 
+// RegisterConfiguredLimits sets up rate limits from configuration
+func (s *RateLimitService) RegisterConfiguredLimits(cfg config.RateLimitConfig) {
+	// Register each configured limit, with built-in defaults
+	limits := []struct {
+		name  string
+		limit Limit
+	}{
+		{
+			name: "token_refresh",
+			limit: Limit{
+				Rate:        cfg.API.TokenRefreshPerHour,
+				Period:      time.Hour,
+				BurstSize:   cfg.API.RefreshBurstSize,
+				WaitTimeout: 0,
+			},
+		},
+		{
+			name: "api_request",
+			limit: Limit{
+				Rate:        cfg.API.RequestsPerMinute,
+				Period:      time.Minute,
+				BurstSize:   cfg.API.BurstSize,
+				WaitTimeout: cfg.Settings.MaxWaitTime,
+			},
+		},
+		{
+			name: "device_code",
+			limit: Limit{
+				Rate:        cfg.API.DeviceCodePerInterval,
+				Period:      cfg.API.DeviceCodeInterval,
+				BurstSize:   0,
+				WaitTimeout: 0,
+			},
+		},
+		{
+			name: "ws_connection",
+			limit: Limit{
+				Rate:        cfg.WebSocket.MessagesPerMinute,
+				Period:      time.Minute,
+				BurstSize:   cfg.WebSocket.BurstSize,
+				WaitTimeout: cfg.Settings.MaxWaitTime,
+			},
+		},
+	}
+
+	var errs []error
+	for _, l := range limits {
+		if err := s.RegisterLimit(l.name, l.limit); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", l.name, err))
+		}
+	}
+
+	if len(errs) > 0 {
+		s.logger.Error("failed to register rate limits",
+			"errors", errs,
+		)
+	}
+}
+
 // RegisterDefaultLimits configures standard rate limits
 func (s *RateLimitService) RegisterDefaultLimits() {
+	// Define sensible defaults that balance security with usability
+	limits := []struct {
+		name  string
+		limit Limit
+	}{
+		{
+			name: "token_refresh",
+			limit: Limit{
+				Rate:        5, // 5 refreshes per hour
+				Period:      time.Hour,
+				BurstSize:   2, // Small burst allowed
+				WaitTimeout: 0, // No waiting for tokens
+			},
+		},
+		{
+			name: "api_request",
+			limit: Limit{
+				Rate:        120, // 120 requests per minute
+				Period:      time.Minute,
+				BurstSize:   30,          // Allow substantial bursts
+				WaitTimeout: time.Second, // Short wait allowed
+			},
+		},
+		{
+			name: "device_code",
+			limit: Limit{
+				Rate:        10, // 10 attempts per minute
+				Period:      time.Minute,
+				BurstSize:   0, // No bursts for security
+				WaitTimeout: 0, // No waiting
+			},
+		},
+		{
+			name: "ws_connection",
+			limit: Limit{
+				Rate:        60, // 60 messages per minute
+				Period:      time.Minute,
+				BurstSize:   15, // Allow message bursts
+				WaitTimeout: 0,  // No waiting for WS
+			},
+		},
+	}
+
 	var errs []error
-
-	// Token rate limits
-	if err := s.RegisterLimit("token_refresh", Limit{
-		Rate:        5, // 5 refreshes
-		Period:      time.Hour,
-		BurstSize:   2, // Allow small burst
-		WaitTimeout: 0, // No waiting
-	}); err != nil {
-		errs = append(errs, fmt.Errorf("token_refresh: %w", err))
-	}
-
-	// API rate limits
-	if err := s.RegisterLimit("api_request", Limit{
-		Rate:        120, // 120 requests
-		Period:      time.Minute,
-		BurstSize:   30,          // Allow bursts
-		WaitTimeout: time.Second, // Short wait allowed
-	}); err != nil {
-		errs = append(errs, fmt.Errorf("api_request: %w", err))
-	}
-
-	// WebSocket limits
-	if err := s.RegisterLimit("ws_message", Limit{
-		Rate:        60, // 60 messages
-		Period:      time.Minute,
-		BurstSize:   15, // Allow message bursts
-		WaitTimeout: 0,  // No waiting for WS
-	}); err != nil {
-		errs = append(errs, fmt.Errorf("ws_message: %w", err))
-	}
-
-	// Registration limits
-	if err := s.RegisterLimit("device_code", Limit{
-		Rate:        10,          // 10 attempts (increased from 3)
-		Period:      time.Minute, // 1 minute (reduced from 5)
-		BurstSize:   0,           // No bursts
-		WaitTimeout: 0,           // No waiting
-	}); err != nil {
-		errs = append(errs, fmt.Errorf("device_code: %w", err))
+	for _, l := range limits {
+		if err := s.RegisterLimit(l.name, l.limit); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", l.name, err))
+		}
 	}
 
 	if len(errs) > 0 {
@@ -207,25 +248,15 @@ func (s *RateLimitService) RegisterDefaultLimits() {
 	}
 }
 
-// BulkReset clears rate limits for multiple keys atomically
-func (s *RateLimitService) BulkReset(ctx context.Context, keys []LimitKey) error {
-	for _, key := range keys {
-		if key.Type == "" {
-			return fmt.Errorf("%w: empty type in key", ErrInvalidKey)
-		}
+// RegisterLimit adds or updates a rate limit configuration
+func (s *RateLimitService) RegisterLimit(limitType string, limit Limit) error {
+	if limit.Rate <= 0 || limit.Period <= 0 {
+		return ErrInvalidLimit
 	}
 
-	for _, key := range keys {
-		if err := s.store.Reset(ctx, key); err != nil {
-			s.logger.Error("failed to reset rate limit in bulk operation",
-				"error", err,
-				"type", key.Type,
-				"token", key.Token,
-				"endpoint", key.Endpoint,
-			)
-			return err
-		}
-	}
+	s.limitsM.Lock()
+	defer s.limitsM.Unlock()
 
+	s.limits[limitType] = limit
 	return nil
 }

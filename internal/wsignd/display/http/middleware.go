@@ -2,9 +2,9 @@ package http
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"runtime/debug"
 	"strings"
@@ -12,7 +12,6 @@ import (
 
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
-	"log/slog"
 
 	"github.com/wrale/wrale-signage/internal/wsignd/auth"
 	werrors "github.com/wrale/wrale-signage/internal/wsignd/errors"
@@ -32,7 +31,8 @@ func GetDisplayID(ctx context.Context) (uuid.UUID, bool) {
 	return id, ok
 }
 
-// logMiddleware provides structured logging for all HTTP requests
+// logMiddleware ensures consistent structured logging across all requests.
+// It creates a request-scoped logger with common fields and timing information.
 func logMiddleware(logger *slog.Logger) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -40,7 +40,7 @@ func logMiddleware(logger *slog.Logger) func(next http.Handler) http.Handler {
 			ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
 			reqID := middleware.GetReqID(r.Context())
 
-			// Create request-scoped logger with ID and path
+			// Create request-scoped logger
 			reqLogger := logger.With(
 				"requestId", reqID,
 				"path", r.URL.Path,
@@ -49,20 +49,18 @@ func logMiddleware(logger *slog.Logger) func(next http.Handler) http.Handler {
 			)
 
 			// Store logger in context for handlers
-			ctx := context.WithValue(r.Context(), struct{}{}, reqLogger)
+			ctx := context.WithValue(r.Context(), loggerKey{}, reqLogger)
 			r = r.WithContext(ctx)
 
 			defer func() {
 				duration := time.Since(startTime)
 				status := ww.Status()
 
-				// Log at appropriate level
 				logFn := reqLogger.Info
 				if status >= 500 {
 					logFn = reqLogger.Error
 				}
 
-				// Log request outcome
 				logFn("http request",
 					"status", status,
 					"duration", duration,
@@ -75,10 +73,11 @@ func logMiddleware(logger *slog.Logger) func(next http.Handler) http.Handler {
 	}
 }
 
-// corsMiddleware implements secure CORS headers following best practices
+// corsMiddleware implements secure CORS headers for enterprise environments.
+// It follows security best practices while allowing necessary cross-origin access.
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Set secure CORS headers with restrictive defaults
+		// Set secure CORS headers
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", strings.Join([]string{
@@ -87,7 +86,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 			"Request-ID",
 			"X-Request-ID",
 		}, ", "))
-		w.Header().Set("Access-Control-Max-Age", "3600") // Cache preflight for 1 hour
+		w.Header().Set("Access-Control-Max-Age", "3600")
 		w.Header().Set("Access-Control-Expose-Headers", strings.Join([]string{
 			"Request-ID",
 			"X-Request-ID",
@@ -97,7 +96,6 @@ func corsMiddleware(next http.Handler) http.Handler {
 			"RateLimit-Reset",
 		}, ", "))
 
-		// Handle preflight requests
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -107,7 +105,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// requestIDHeaderMiddleware ensures consistent request ID propagation
+// requestIDHeaderMiddleware ensures request tracing through consistent ID propagation
 func requestIDHeaderMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		reqID := middleware.GetReqID(r.Context())
@@ -119,7 +117,7 @@ func requestIDHeaderMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// recoverMiddleware handles panics and returns standardized error responses
+// recoverMiddleware provides graceful panic recovery with proper OAuth error responses
 func recoverMiddleware(logger *slog.Logger) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -135,24 +133,8 @@ func recoverMiddleware(logger *slog.Logger) func(next http.Handler) http.Handler
 						"requestId", reqID,
 					)
 
-					// Write OAuth-compliant error response
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(http.StatusInternalServerError)
-
-					response := struct {
-						Error            string `json:"error"`
-						ErrorDescription string `json:"error_description"`
-					}{
-						Error:            "server_error",
-						ErrorDescription: "An internal error occurred",
-					}
-
-					if err := json.NewEncoder(w).Encode(response); err != nil {
-						logger.Error("failed to write error response",
-							"error", err,
-							"originalError", rvr,
-						)
-					}
+					// Return OAuth-compliant error for panics
+					writeOAuthError(w, errServerError, "An unexpected error occurred", http.StatusInternalServerError, logger)
 				}
 			}()
 
@@ -161,7 +143,8 @@ func recoverMiddleware(logger *slog.Logger) func(next http.Handler) http.Handler
 	}
 }
 
-// rateLimitMiddleware provides OAuth-compliant rate limiting responses
+// rateLimitMiddleware enforces rate limits following OAuth 2.0 best practices.
+// It provides standardized headers and error responses for rate limiting.
 func rateLimitMiddleware(service ratelimit.Service, logger *slog.Logger, options ratelimit.RateLimitOptions) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		rateLimitNext := ratelimit.Middleware(service, logger, options)(next)
@@ -169,40 +152,34 @@ func rateLimitMiddleware(service ratelimit.Service, logger *slog.Logger, options
 			reqID := middleware.GetReqID(r.Context())
 			reqLogger := logger.With("requestId", reqID)
 
-			// Apply rate limiting
+			// Apply rate limiting with proper error handling
 			defer func() {
 				if rvr := recover(); rvr != nil {
 					if limitErr, ok := rvr.(error); ok && errors.Is(limitErr, ratelimit.ErrLimitExceeded) {
-						// Get rate limit details
+						// Get limit details
 						limit := service.GetLimit(options.LimitType)
-						remaining, reset := service.Status(ratelimit.LimitKey{
+
+						// Calculate remaining requests and reset time
+						limitKey := ratelimit.LimitKey{
 							Type:     options.LimitType,
 							RemoteIP: r.RemoteAddr,
-						})
+						}
+
+						// Retrieve current status
+						remaining, resetTime := 0, time.Now().Add(limit.Period)
+						if counts, err := service.Status(limitKey); err == nil {
+							remaining = counts.Remaining
+							resetTime = counts.Reset
+						}
 
 						// Set standard rate limit headers
 						w.Header().Set("RateLimit-Limit", fmt.Sprintf("%d", limit.Rate))
 						w.Header().Set("RateLimit-Remaining", fmt.Sprintf("%d", remaining))
-						w.Header().Set("RateLimit-Reset", fmt.Sprintf("%d", reset.Unix()))
-						w.Header().Set("Retry-After", fmt.Sprintf("%d", int(time.Until(reset).Seconds())))
+						w.Header().Set("RateLimit-Reset", fmt.Sprintf("%d", resetTime.Unix()))
+						w.Header().Set("Retry-After", fmt.Sprintf("%d", int(time.Until(resetTime).Seconds())))
 
-						// Write OAuth error response
-						w.Header().Set("Content-Type", "application/json")
-						w.WriteHeader(http.StatusTooManyRequests)
-
-						response := struct {
-							Error            string `json:"error"`
-							ErrorDescription string `json:"error_description"`
-						}{
-							Error:            "slow_down",
-							ErrorDescription: "Too many requests, please try again later",
-						}
-
-						if err := json.NewEncoder(w).Encode(response); err != nil {
-							reqLogger.Error("failed to write rate limit response",
-								"error", err,
-							)
-						}
+						// Return OAuth-compliant rate limit error
+						writeOAuthError(w, errSlowDown, "Rate limit exceeded, please reduce request rate", http.StatusTooManyRequests, reqLogger)
 						return
 					}
 					panic(rvr) // Re-panic if not a rate limit error
@@ -214,39 +191,40 @@ func rateLimitMiddleware(service ratelimit.Service, logger *slog.Logger, options
 	}
 }
 
-// authMiddleware validates OAuth tokens and manages display authentication
+// authMiddleware validates OAuth tokens and manages display authentication.
+// It ensures proper error responses following OAuth 2.0 specifications.
 func authMiddleware(authService auth.Service, logger *slog.Logger) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			reqID := middleware.GetReqID(r.Context())
 			reqLogger := logger.With("requestId", reqID)
 
-			// Extract token from Authorization header
+			// Extract and validate bearer token
 			authHeader := r.Header.Get("Authorization")
 			if authHeader == "" {
-				writeOAuthError(w, "invalid_request", "Missing authorization header", http.StatusUnauthorized, reqLogger)
+				writeOAuthError(w, errInvalidRequest, "Missing authorization header", http.StatusUnauthorized, reqLogger)
 				return
 			}
 
 			parts := strings.Split(authHeader, " ")
 			if len(parts) != 2 || parts[0] != "Bearer" {
-				writeOAuthError(w, "invalid_request", "Invalid authorization format", http.StatusUnauthorized, reqLogger)
+				writeOAuthError(w, errInvalidRequest, "Invalid authorization format", http.StatusUnauthorized, reqLogger)
 				return
 			}
 
 			// Validate access token
 			displayID, err := authService.ValidateAccessToken(r.Context(), parts[1])
 			if err != nil {
-				var errCode, errMsg string
+				var errCode, errDesc string
 				if err == auth.ErrTokenExpired {
-					errCode = "invalid_token"
-					errMsg = "Access token has expired"
+					errCode = errExpiredToken
+					errDesc = "Access token has expired"
 				} else {
-					errCode = "invalid_token"
-					errMsg = "Invalid access token"
+					errCode = errInvalidRequest
+					errDesc = "Invalid access token"
 				}
 
-				writeOAuthError(w, errCode, errMsg, http.StatusUnauthorized, reqLogger)
+				writeOAuthError(w, errCode, errDesc, http.StatusUnauthorized, reqLogger)
 				reqLogger.Error("auth failed",
 					"error", err,
 					"remoteIP", r.RemoteAddr,
@@ -258,28 +236,5 @@ func authMiddleware(authService auth.Service, logger *slog.Logger) func(next htt
 			ctx := context.WithValue(r.Context(), displayIDKey, displayID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
-	}
-}
-
-// writeOAuthError writes a standardized OAuth 2.0 error response
-func writeOAuthError(w http.ResponseWriter, code string, description string, status int, logger *slog.Logger) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Pragma", "no-cache")
-	w.WriteHeader(status)
-
-	response := struct {
-		Error            string `json:"error"`
-		ErrorDescription string `json:"error_description,omitempty"`
-	}{
-		Error:            code,
-		ErrorDescription: description,
-	}
-
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		logger.Error("failed to write error response",
-			"error", err,
-			"originalError", code,
-		)
 	}
 }

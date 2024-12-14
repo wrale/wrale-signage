@@ -15,6 +15,18 @@ type LimitKey struct {
 	Endpoint string // API endpoint for specific limits
 }
 
+// LimitStatus represents the current state of a rate limit
+type LimitStatus struct {
+	// Remaining is the number of requests remaining in the current window
+	Remaining int
+
+	// Reset is when the current window expires and the limit resets
+	Reset time.Time
+
+	// Limit is the configured limit that applies
+	Limit Limit
+}
+
 // Store handles rate limit state persistence
 type Store interface {
 	// Increment attempts to increment a counter and returns the current count
@@ -26,6 +38,9 @@ type Store interface {
 
 	// IsExceeded checks if a limit has been exceeded without incrementing
 	IsExceeded(ctx context.Context, key LimitKey, limit Limit) (bool, error)
+
+	// GetCount returns the current count for a key
+	GetCount(ctx context.Context, key LimitKey) (int, error)
 }
 
 // Service manages rate limiting for the application
@@ -35,6 +50,9 @@ type Service interface {
 
 	// GetLimit returns the configured limit for a key type
 	GetLimit(limitType string) Limit
+
+	// Status returns the current rate limit status for a key
+	Status(key LimitKey) (*LimitStatus, error)
 
 	// Reset clears rate limit counters for a key
 	Reset(ctx context.Context, key LimitKey) error
@@ -58,6 +76,18 @@ type Limit struct {
 	BurstSize int
 
 	// WaitTimeout is how long to wait if rate limited (0 for no wait)
+	WaitTimeout time.Duration
+}
+
+// RateLimitOptions configures middleware behavior
+type RateLimitOptions struct {
+	// LimitType identifies which rate limit to apply
+	LimitType string
+
+	// WaitOnLimit indicates if requests should wait when rate limited
+	WaitOnLimit bool
+
+	// WaitTimeout overrides the default wait timeout
 	WaitTimeout time.Duration
 }
 
