@@ -89,3 +89,27 @@ func (s *Store) IsExceeded(ctx context.Context, key ratelimit.LimitKey, limit ra
 	count, _ := strconv.Atoi(val)
 	return count > limit.Rate+limit.BurstSize, nil
 }
+
+// GetCount returns the current count for a key without any side effects.
+// Returns 0 for non-existent keys.
+func (s *Store) GetCount(ctx context.Context, key ratelimit.LimitKey) (int, error) {
+	val, err := s.client.Get(ctx, s.keyStr(key)).Result()
+
+	// Handle non-existent keys
+	if err == redis.Nil {
+		return 0, nil
+	}
+
+	// Handle other Redis errors
+	if err != nil {
+		return 0, fmt.Errorf("%w: %v", ratelimit.ErrStoreError, err)
+	}
+
+	// Convert string value to int
+	count, err := strconv.Atoi(val)
+	if err != nil {
+		return 0, fmt.Errorf("%w: invalid count value: %v", ratelimit.ErrStoreError, err)
+	}
+
+	return count, nil
+}

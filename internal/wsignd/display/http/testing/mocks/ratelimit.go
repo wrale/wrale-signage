@@ -35,3 +35,16 @@ func (m *RateLimitService) RegisterDefaultLimits() {
 func (m *RateLimitService) RegisterConfiguredLimits(cfg config.RateLimitConfig) {
 	m.Called(cfg)
 }
+
+// Status returns the current rate limit status for a key.
+// It can be configured to return either success or error cases for testing.
+func (m *RateLimitService) Status(key ratelimit.LimitKey) (*ratelimit.LimitStatus, error) {
+	args := m.Called(key)
+
+	// Handle nil return for error cases
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+
+	return args.Get(0).(*ratelimit.LimitStatus), args.Error(1)
+}
