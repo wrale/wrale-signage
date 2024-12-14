@@ -126,39 +126,46 @@ func mapToOAuthError(err error, defaultStatus int) *OAuthError {
 		return oauthErr
 	}
 
-	// Map domain errors to OAuth errors using errors.Is
+	// Check for common domain error types using type assertions
+	var notFoundErr *display.ErrNotFound
+	var existsErr *display.ErrExists
+	var invalidStateErr *display.ErrInvalidState
+	var invalidNameErr *display.ErrInvalidName
+	var invalidLocationErr *display.ErrInvalidLocation
+	var versionMismatchErr *display.ErrVersionMismatch
+
 	switch {
-	case errors.Is(err, display.ErrNotFound):
+	case errors.As(err, &notFoundErr):
 		return NewOAuthError(OAuthErrInvalidRequest,
 			"Display not found",
 			http.StatusNotFound,
 			err)
 
-	case errors.Is(err, display.ErrExists):
+	case errors.As(err, &existsErr):
 		return NewOAuthError(OAuthErrInvalidRequest,
 			"Display already exists",
 			http.StatusConflict,
 			err)
 
-	case errors.Is(err, display.ErrInvalidState):
+	case errors.As(err, &invalidStateErr):
 		return NewOAuthError(OAuthErrInvalidRequest,
 			"Invalid display state",
 			http.StatusBadRequest,
 			err)
 
-	case errors.Is(err, display.ErrInvalidName):
+	case errors.As(err, &invalidNameErr):
 		return NewOAuthError(OAuthErrInvalidRequest,
 			"Invalid display name",
 			http.StatusBadRequest,
 			err)
 
-	case errors.Is(err, display.ErrInvalidLocation):
+	case errors.As(err, &invalidLocationErr):
 		return NewOAuthError(OAuthErrInvalidRequest,
 			"Invalid display location",
 			http.StatusBadRequest,
 			err)
 
-	case errors.Is(err, display.ErrVersionMismatch):
+	case errors.As(err, &versionMismatchErr):
 		return NewOAuthError(OAuthErrInvalidRequest,
 			"Display was modified by another request",
 			http.StatusConflict,

@@ -23,6 +23,15 @@ type contextKey int
 
 const (
 	displayIDKey contextKey = iota
+	loggerKey
+)
+
+// common error responses
+var (
+	errInvalidRequest = NewOAuthInvalidRequestError("Invalid request", nil)
+	errExpiredToken   = NewOAuthInvalidTokenError("Token expired", nil)
+	errSlowDown       = NewOAuthSlowDownError(nil)
+	errServerError    = NewOAuthServerError("Internal server error", nil)
 )
 
 // GetDisplayID retrieves the authenticated display ID from context
@@ -49,7 +58,7 @@ func logMiddleware(logger *slog.Logger) func(next http.Handler) http.Handler {
 			)
 
 			// Store logger in context for handlers
-			ctx := context.WithValue(r.Context(), loggerKey{}, reqLogger)
+			ctx := context.WithValue(r.Context(), loggerKey, reqLogger)
 			r = r.WithContext(ctx)
 
 			defer func() {
@@ -133,8 +142,7 @@ func recoverMiddleware(logger *slog.Logger) func(next http.Handler) http.Handler
 						"requestId", reqID,
 					)
 
-					// Return OAuth-compliant error for panics
-					writeOAuthError(w, errServerError, "An unexpected error occurred", http.StatusInternalServerError, logger)
+					writeError(w, errServerError, http.StatusInternalServerError, logger)
 				}
 			}()
 
@@ -178,8 +186,7 @@ func rateLimitMiddleware(service ratelimit.Service, logger *slog.Logger, options
 						w.Header().Set("RateLimit-Reset", fmt.Sprintf("%d", resetTime.Unix()))
 						w.Header().Set("Retry-After", fmt.Sprintf("%d", int(time.Until(resetTime).Seconds())))
 
-						// Return OAuth-compliant rate limit error
-						writeOAuthError(w, errSlowDown, "Rate limit exceeded, please reduce request rate", http.StatusTooManyRequests, reqLogger)
+						writeError(w, errSlowDown, http.StatusTooManyRequests, reqLogger)
 						return
 					}
 					panic(rvr) // Re-panic if not a rate limit error
@@ -202,29 +209,28 @@ func authMiddleware(authService auth.Service, logger *slog.Logger) func(next htt
 			// Extract and validate bearer token
 			authHeader := r.Header.Get("Authorization")
 			if authHeader == "" {
-				writeOAuthError(w, errInvalidRequest, "Missing authorization header", http.StatusUnauthorized, reqLogger)
+				writeError(w, errInvalidRequest, http.StatusUnauthorized, reqLogger)
 				return
 			}
 
 			parts := strings.Split(authHeader, " ")
 			if len(parts) != 2 || parts[0] != "Bearer" {
-				writeOAuthError(w, errInvalidRequest, "Invalid authorization format", http.StatusUnauthorized, reqLogger)
+				writeError(w, errInvalidRequest, http.StatusUnauthorized, reqLogger)
 				return
 			}
 
 			// Validate access token
 			displayID, err := authService.ValidateAccessToken(r.Context(), parts[1])
 			if err != nil {
-				var errCode, errDesc string
-				if err == auth.ErrTokenExpired {
-					errCode = errExpiredToken
-					errDesc = "Access token has expired"
+				// Map common auth errors
+				var oauthErr *OAuthError
+				if errors.Is(err, auth.ErrTokenExpired) {
+					oauthErr = errExpiredToken
 				} else {
-					errCode = errInvalidRequest
-					errDesc = "Invalid access token"
+					oauthErr = errInvalidRequest
 				}
 
-				writeOAuthError(w, errCode, errDesc, http.StatusUnauthorized, reqLogger)
+				writeError(w, oauthErr, http.StatusUnauthorized, reqLogger)
 				reqLogger.Error("auth failed",
 					"error", err,
 					"remoteIP", r.RemoteAddr,
