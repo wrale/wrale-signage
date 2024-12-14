@@ -8,6 +8,7 @@ import (
 
 	"github.com/wrale/wrale-signage/internal/wsignd/display"
 	"github.com/wrale/wrale-signage/internal/wsignd/display/activation"
+	werrors "github.com/wrale/wrale-signage/internal/wsignd/errors"
 )
 
 // OAuthErrorType represents standard OAuth 2.0 error codes
@@ -126,6 +127,33 @@ func mapToOAuthError(err error, defaultStatus int) *OAuthError {
 		return oauthErr
 	}
 
+	// First check core error types
+	switch {
+	case errors.Is(err, werrors.ErrUnauthorized):
+		return NewOAuthError(OAuthErrInvalidClient,
+			"Authentication required",
+			http.StatusUnauthorized,
+			err)
+
+	case errors.Is(err, werrors.ErrForbidden):
+		return NewOAuthError(OAuthErrAccessDenied,
+			"Access denied",
+			http.StatusForbidden,
+			err)
+
+	case errors.Is(err, werrors.ErrNotFound):
+		return NewOAuthError(OAuthErrInvalidRequest,
+			"Resource not found",
+			http.StatusNotFound,
+			err)
+
+	case errors.Is(err, werrors.ErrInvalidInput):
+		return NewOAuthError(OAuthErrInvalidRequest,
+			err.Error(),
+			http.StatusBadRequest,
+			err)
+	}
+
 	// Check for common domain error types using type assertions
 	var notFoundErr *display.ErrNotFound
 	var existsErr *display.ErrExists
@@ -137,62 +165,62 @@ func mapToOAuthError(err error, defaultStatus int) *OAuthError {
 	switch {
 	case errors.As(err, &notFoundErr):
 		return NewOAuthError(OAuthErrInvalidRequest,
-			"Display not found",
+			notFoundErr.Error(),
 			http.StatusNotFound,
 			err)
 
 	case errors.As(err, &existsErr):
 		return NewOAuthError(OAuthErrInvalidRequest,
-			"Display already exists",
+			existsErr.Error(),
 			http.StatusConflict,
 			err)
 
 	case errors.As(err, &invalidStateErr):
 		return NewOAuthError(OAuthErrInvalidRequest,
-			"Invalid display state",
+			invalidStateErr.Error(),
 			http.StatusBadRequest,
 			err)
 
 	case errors.As(err, &invalidNameErr):
 		return NewOAuthError(OAuthErrInvalidRequest,
-			"Invalid display name",
+			invalidNameErr.Error(),
 			http.StatusBadRequest,
 			err)
 
 	case errors.As(err, &invalidLocationErr):
 		return NewOAuthError(OAuthErrInvalidRequest,
-			"Invalid display location",
+			invalidLocationErr.Error(),
 			http.StatusBadRequest,
 			err)
 
 	case errors.As(err, &versionMismatchErr):
 		return NewOAuthError(OAuthErrInvalidRequest,
-			"Display was modified by another request",
+			versionMismatchErr.Error(),
 			http.StatusConflict,
 			err)
 
 	case errors.Is(err, activation.ErrCodeNotFound):
 		return NewOAuthError(OAuthErrInvalidGrant,
-			"Invalid activation code",
-			http.StatusBadRequest,
+			err.Error(),
+			http.StatusNotFound,
 			err)
 
 	case errors.Is(err, activation.ErrCodeExpired):
 		return NewOAuthError(OAuthErrExpiredToken,
-			"Activation code expired",
+			err.Error(),
 			http.StatusBadRequest,
 			err)
 
 	case errors.Is(err, activation.ErrAlreadyActive):
 		return NewOAuthError(OAuthErrInvalidGrant,
-			"Code already activated",
+			err.Error(),
 			http.StatusConflict,
 			err)
-
-	default:
-		return NewOAuthError(OAuthErrServerError,
-			"An unexpected error occurred",
-			defaultStatus,
-			err)
 	}
+
+	// Default to server error for unhandled cases
+	return NewOAuthError(OAuthErrServerError,
+		"An unexpected error occurred",
+		defaultStatus,
+		err)
 }
