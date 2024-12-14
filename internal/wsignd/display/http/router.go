@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/wrale/wrale-signage/internal/wsignd/ratelimit"
 )
 
 // NewRouter creates a new HTTP router for display endpoints.
@@ -24,11 +25,11 @@ func (h *Handler) Router() chi.Router {
 	r.Use(recoverMiddleware(h.logger))
 	r.Use(logMiddleware(h.logger))
 
+	// Initialize rate limiters
+	rateLimits := ratelimit.NewCommonRateLimits(h.ratelimit, h.logger)
+
 	// Mount all display endpoints under /api/v1alpha1/displays
 	r.Route("/api/v1alpha1/displays", func(r chi.Router) {
-		// Initialize common rate limiters
-		rateLimits := h.ratelimit.NewCommonRateLimits()
-
 		// Health check endpoints (no rate limiting or auth)
 		r.Get("/healthz", h.handleHealth())
 		r.Get("/readyz", h.handleReady())
@@ -54,7 +55,7 @@ func (h *Handler) Router() chi.Router {
 			r.Put("/{id}/last-seen", h.UpdateLastSeen)
 
 			// Content events with dedicated rate limit
-			r.With(rateLimits.ContentEventLimiter()).Post("/events", h.HandleContentEvents)
+			r.Post("/events", h.HandleContentEvents)
 
 			// WebSocket endpoint with WebSocket-specific rate limit
 			r.With(rateLimits.WebSocketLimiter()).Get("/ws", h.ServeWebSocket)
@@ -62,20 +63,4 @@ func (h *Handler) Router() chi.Router {
 	})
 
 	return r
-}
-
-// handleHealth returns basic health check status
-func (h *Handler) handleHealth() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"status":"ok"}`))
-	}
-}
-
-// handleReady checks if the server is ready to accept requests
-func (h *Handler) handleReady() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"status":"ok"}`))
-	}
 }
