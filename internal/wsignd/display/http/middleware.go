@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"runtime/debug"
 	"strings"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/wrale/wrale-signage/internal/wsignd/auth"
 	werrors "github.com/wrale/wrale-signage/internal/wsignd/errors"
+	"github.com/wrale/wrale-signage/internal/wsignd/ratelimit"
 )
 
 // Key type for context values
@@ -84,29 +86,28 @@ func recoverMiddleware(logger *slog.Logger) func(next http.Handler) http.Handler
 			defer func() {
 				if rvr := recover(); rvr != nil {
 					reqID := middleware.GetReqID(r.Context())
+					stack := string(debug.Stack())
+
 					logger.Error("panic recovery",
 						"error", rvr,
-						"stack", string(debug.Stack()),
+						"stack", stack,
 						"path", r.URL.Path,
 						"requestId", reqID,
 					)
 
-					// Ensure clean response
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(http.StatusInternalServerError)
+					// Create error with panic details
+					err := werrors.NewError(
+						"INTERNAL",
+						fmt.Sprintf("internal error: %v", rvr),
+						"panic",
+						fmt.Errorf("panic: %v", rvr),
+					)
 
-					// Write standardized error response
-					err := werrors.NewError("INTERNAL", "internal error", "panic", nil)
-					if encodeErr := json.NewEncoder(w).Encode(map[string]string{
-						"code":    err.Code,
-						"message": err.Message,
-					}); encodeErr != nil {
-						logger.Error("failed to write error response",
-							"error", encodeErr,
-							"path", r.URL.Path,
-							"requestId", reqID,
-						)
-					}
+					// Write error response
+					writeJSONError(w, err, http.StatusInternalServerError, logger.With(
+						"requestId", reqID,
+						"path", r.URL.Path,
+					))
 				}
 			}()
 
@@ -115,18 +116,54 @@ func recoverMiddleware(logger *slog.Logger) func(next http.Handler) http.Handler
 	}
 }
 
+// rateLimitMiddleware wraps the ratelimit.Middleware to provide consistent error responses
+func rateLimitMiddleware(service ratelimit.Service, logger *slog.Logger, options ratelimit.RateLimitOptions) func(next http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		rateLimitNext := ratelimit.Middleware(service, logger, options)(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			reqID := middleware.GetReqID(r.Context())
+
+			// Handle rate limit errors with consistent format
+			defer func() {
+				if rvr := recover(); rvr != nil {
+					if limitErr, ok := rvr.(error); ok && errors.Is(limitErr, ratelimit.ErrLimitExceeded) {
+						err := werrors.NewError(
+							"RATE_LIMITED",
+							"too many requests",
+							"ratelimit",
+							limitErr,
+						)
+						w.Header().Set("Retry-After", "60") // Default 1 minute retry
+						writeJSONError(w, err, http.StatusTooManyRequests, logger.With(
+							"requestId", reqID,
+							"path", r.URL.Path,
+						))
+						return
+					}
+					panic(rvr) // Re-panic if not a rate limit error
+				}
+			}()
+
+			rateLimitNext.ServeHTTP(w, r)
+		})
+	}
+}
+
 // authMiddleware validates bearer tokens and adds display ID to context
 func authMiddleware(authService auth.Service, logger *slog.Logger) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			reqID := middleware.GetReqID(r.Context())
+			reqLogger := logger.With(
+				"requestId", reqID,
+				"path", r.URL.Path,
+			)
+
 			// Extract token from Authorization header
 			authHeader := r.Header.Get("Authorization")
 			if authHeader == "" {
 				err := werrors.NewError("UNAUTHORIZED", "missing authorization header", "auth", nil)
-				writeJSONError(w, err, http.StatusUnauthorized, logger.With(
-					"path", r.URL.Path,
-					"requestId", middleware.GetReqID(r.Context()),
-				))
+				writeJSONError(w, err, http.StatusUnauthorized, reqLogger)
 				return
 			}
 
@@ -134,30 +171,25 @@ func authMiddleware(authService auth.Service, logger *slog.Logger) func(next htt
 			parts := strings.Split(authHeader, " ")
 			if len(parts) != 2 || parts[0] != "Bearer" {
 				err := werrors.NewError("UNAUTHORIZED", "invalid authorization header", "auth", nil)
-				writeJSONError(w, err, http.StatusUnauthorized, logger.With(
-					"path", r.URL.Path,
-					"requestId", middleware.GetReqID(r.Context()),
-				))
+				writeJSONError(w, err, http.StatusUnauthorized, reqLogger)
 				return
 			}
 
 			// Validate token with auth service
 			displayID, err := authService.ValidateAccessToken(r.Context(), parts[1])
 			if err != nil {
+				var errCode, errMsg string
 				if err == auth.ErrTokenExpired {
-					writeJSONError(w, werrors.NewError("UNAUTHORIZED", "token expired", "auth", err), http.StatusUnauthorized, logger.With(
-						"path", r.URL.Path,
-						"requestId", middleware.GetReqID(r.Context()),
-					))
+					errCode = "TOKEN_EXPIRED"
+					errMsg = "access token has expired"
 				} else {
-					writeJSONError(w, werrors.NewError("UNAUTHORIZED", "invalid token", "auth", err), http.StatusUnauthorized, logger.With(
-						"path", r.URL.Path,
-						"requestId", middleware.GetReqID(r.Context()),
-					))
+					errCode = "UNAUTHORIZED"
+					errMsg = "invalid access token"
 				}
-				logger.Error("auth failed",
+
+				writeJSONError(w, werrors.NewError(errCode, errMsg, "auth", err), http.StatusUnauthorized, reqLogger)
+				reqLogger.Error("auth failed",
 					"error", err,
-					"path", r.URL.Path,
 					"remoteIP", r.RemoteAddr,
 				)
 				return
@@ -175,18 +207,22 @@ func writeJSONError(w http.ResponseWriter, err error, status int, logger *slog.L
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 
+	// Convert to werrors.Error if not already
 	var werr *werrors.Error
 	if !errors.As(err, &werr) {
 		werr = werrors.NewError("INTERNAL", err.Error(), "", err)
 	}
 
-	if encodeErr := json.NewEncoder(w).Encode(map[string]string{
+	// Build error response
+	resp := map[string]string{
 		"code":    werr.Code,
 		"message": werr.Message,
-	}); encodeErr != nil {
-		// Log encode error but can't write response at this point
+	}
+
+	if encodeErr := json.NewEncoder(w).Encode(resp); encodeErr != nil {
 		logger.Error("failed to write error response",
 			"error", encodeErr,
+			"originalError", err,
 		)
 	}
 }

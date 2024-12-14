@@ -9,8 +9,11 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/wrale/wrale-signage/api/types/v1alpha1"
 	"github.com/wrale/wrale-signage/internal/wsignd/display"
-	"github.com/wrale/wrale-signage/internal/wsignd/display/activation"
 	werrors "github.com/wrale/wrale-signage/internal/wsignd/errors"
+)
+
+const (
+	maxRequestBodySize = 1 << 20 // 1MB
 )
 
 // RequestDeviceCode handles device code generation
@@ -27,7 +30,7 @@ func (h *Handler) RequestDeviceCode(w http.ResponseWriter, r *http.Request) {
 			"error", err,
 			"requestID", reqID,
 		)
-		h.writeError(w, werrors.NewError("GENERATION_FAILED", "failed to generate device code", "RequestDeviceCode", err), http.StatusInternalServerError)
+		writeJSONError(w, werrors.NewError("GENERATION_FAILED", "failed to generate device code", "RequestDeviceCode", err), http.StatusInternalServerError, h.logger)
 		return
 	}
 
@@ -45,7 +48,7 @@ func (h *Handler) RequestDeviceCode(w http.ResponseWriter, r *http.Request) {
 			"error", err,
 			"requestID", reqID,
 		)
-		h.writeError(w, werrors.NewError("ENCODING_ERROR", "failed to encode response", "RequestDeviceCode", err), http.StatusInternalServerError)
+		writeJSONError(w, werrors.NewError("ENCODING_ERROR", "failed to encode response", "RequestDeviceCode", err), http.StatusInternalServerError, h.logger)
 		return
 	}
 }
@@ -71,26 +74,39 @@ func validateActivationRequest(body []byte) (*v1alpha1.DisplayRegistrationReques
 // ActivateDeviceCode handles device activation by user code
 func (h *Handler) ActivateDeviceCode(w http.ResponseWriter, r *http.Request) {
 	reqID := middleware.GetReqID(r.Context())
-
-	h.logger.Info("activating display",
+	logger := h.logger.With(
 		"requestID", reqID,
 		"activationCode", "",
 		"name", "",
 	)
 
+	logger.Info("activating display")
+
+	// Enforce request body size limit
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
+	defer r.Body.Close()
+
 	// Read request body
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		h.writeError(w, werrors.NewError("INVALID_INPUT", "failed to read request body", "ActivateDeviceCode", err), http.StatusBadRequest)
+		logger.Error("failed to read request body", "error", err)
+		writeJSONError(w, werrors.NewError("INVALID_INPUT", "failed to read request body", "ActivateDeviceCode", err), http.StatusBadRequest, logger)
 		return
 	}
 
 	// Validate request
 	req, err := validateActivationRequest(body)
 	if err != nil {
-		h.writeError(w, err, http.StatusBadRequest)
+		logger.Error("invalid request", "error", err)
+		writeJSONError(w, err, http.StatusBadRequest, logger)
 		return
 	}
+
+	// Update logger context
+	logger = logger.With(
+		"activationCode", req.ActivationCode,
+		"name", req.Name,
+	)
 
 	// Register display first
 	d, err := h.service.Register(r.Context(), req.Name, display.Location{
@@ -99,11 +115,7 @@ func (h *Handler) ActivateDeviceCode(w http.ResponseWriter, r *http.Request) {
 		Position: req.Location.Position,
 	})
 	if err != nil {
-		h.logger.Error("failed to register display",
-			"error", err,
-			"requestID", reqID,
-			"name", req.Name,
-		)
+		logger.Error("failed to register display", "error", err)
 
 		var status int
 		switch err.(type) {
@@ -115,35 +127,33 @@ func (h *Handler) ActivateDeviceCode(w http.ResponseWriter, r *http.Request) {
 			status = http.StatusInternalServerError
 		}
 
-		h.writeError(w, err, status)
+		writeJSONError(w, err, status, logger)
 		return
 	}
 
 	// Now activate the device code with display ID
 	if err := h.activation.ActivateCode(r.Context(), req.ActivationCode, d.ID); err != nil {
-		h.logger.Error("failed to activate device code",
+		logger.Error("failed to activate device code",
 			"error", err,
-			"requestID", reqID,
 			"displayID", d.ID,
 		)
 
 		status := http.StatusInternalServerError
-		if err == activation.ErrCodeNotFound || err == activation.ErrCodeExpired {
+		if err == display.ErrCodeNotFound || err == display.ErrCodeExpired {
 			status = http.StatusNotFound
 		}
-		h.writeError(w, werrors.NewError("NOT_FOUND", "activation code not found", "ActivateDeviceCode", err), status)
+		writeJSONError(w, werrors.NewError("NOT_FOUND", "activation code not found", "ActivateDeviceCode", err), status, logger)
 		return
 	}
 
 	// Generate authentication tokens
 	token, err := h.auth.CreateToken(r.Context(), d.ID)
 	if err != nil {
-		h.logger.Error("failed to generate auth token",
+		logger.Error("failed to generate auth token",
 			"error", err,
-			"requestID", reqID,
 			"displayID", d.ID,
 		)
-		h.writeError(w, werrors.NewError("TOKEN_ERROR", "activation succeeded but token generation failed", "ActivateDeviceCode", err), http.StatusInternalServerError)
+		writeJSONError(w, werrors.NewError("TOKEN_ERROR", "activation succeeded but token generation failed", "ActivateDeviceCode", err), http.StatusInternalServerError, logger)
 		return
 	}
 
@@ -182,11 +192,13 @@ func (h *Handler) ActivateDeviceCode(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		h.logger.Error("failed to encode response",
-			"error", err,
-			"requestID", reqID,
-		)
-		h.writeError(w, werrors.NewError("ENCODING_ERROR", "failed to encode response", "ActivateDeviceCode", err), http.StatusInternalServerError)
+		logger.Error("failed to encode response", "error", err)
+		writeJSONError(w, werrors.NewError("ENCODING_ERROR", "failed to encode response", "ActivateDeviceCode", err), http.StatusInternalServerError, logger)
 		return
 	}
+
+	logger.Info("display activated successfully",
+		"displayID", d.ID,
+		"name", d.Name,
+	)
 }
