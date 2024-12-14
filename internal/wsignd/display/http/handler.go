@@ -1,131 +1,153 @@
 package http
 
 import (
-	"context"
-	"encoding/json"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-
 	"github.com/wrale/wrale-signage/internal/wsignd/auth"
 	"github.com/wrale/wrale-signage/internal/wsignd/display"
 	"github.com/wrale/wrale-signage/internal/wsignd/display/activation"
 	"github.com/wrale/wrale-signage/internal/wsignd/ratelimit"
 )
 
-// Handler implements HTTP handlers for display management
+// Handler encapsulates the HTTP API for display management
 type Handler struct {
 	service    display.Service
 	activation activation.Service
 	auth       auth.Service
-	rateLimit  ratelimit.Service
+	ratelimit  ratelimit.Service
 	logger     *slog.Logger
-	hub        *Hub
 }
 
-// NewHandler creates a new display HTTP handler
-func NewHandler(service display.Service, activation activation.Service, auth auth.Service, rateLimit ratelimit.Service, logger *slog.Logger) *Handler {
-	h := &Handler{
+// NewHandler creates a new HTTP handler for display endpoints
+func NewHandler(
+	service display.Service,
+	activation activation.Service,
+	auth auth.Service,
+	ratelimit ratelimit.Service,
+	logger *slog.Logger,
+) *Handler {
+	return &Handler{
 		service:    service,
 		activation: activation,
 		auth:       auth,
-		rateLimit:  rateLimit,
+		ratelimit:  ratelimit,
 		logger:     logger,
 	}
-	h.hub = newHub(h.rateLimit, logger)
-	go h.hub.run(context.Background()) // TODO: manage lifecycle with context
-	return h
 }
 
-// Router returns a configured chi router for display endpoints
-func (h *Handler) Router() *chi.Mux {
+// Rate limit configurations
+type CommonRateLimits struct {
+	APIRequestLimiter   ratelimit.Limiter
+	DeviceCodeLimiter   ratelimit.Limiter
+	ContentEventLimiter ratelimit.Limiter
+}
+
+// newCommonRateLimits creates standard rate limiters
+func (h *Handler) newCommonRateLimits() (*CommonRateLimits, error) {
+	// API requests: 100/minute with burst of 5
+	apiLimiter, err := h.ratelimit.GetLimit("api_request", &ratelimit.Config{
+		Rate:  100,
+		Burst: 5,
+		TTL:   time.Minute,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Device activation: 5/minute
+	deviceLimiter, err := h.ratelimit.GetLimit("device_activation", &ratelimit.Config{
+		Rate:  5,
+		Burst: 1,
+		TTL:   time.Minute,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Content events: 1000/minute with burst of 100
+	contentLimiter, err := h.ratelimit.GetLimit("content_events", &ratelimit.Config{
+		Rate:  1000,
+		Burst: 100,
+		TTL:   time.Minute,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &CommonRateLimits{
+		APIRequestLimiter:   apiLimiter,
+		DeviceCodeLimiter:   deviceLimiter,
+		ContentEventLimiter: contentLimiter,
+	}, nil
+}
+
+// Router returns the HTTP router for display endpoints
+func (h *Handler) Router() http.Handler {
 	r := chi.NewRouter()
 
-	// Base middleware in dependency order
+	// Add common middleware
 	r.Use(middleware.RequestID)
 	r.Use(requestIDHeaderMiddleware)
 	r.Use(middleware.RealIP)
-	r.Use(recoverMiddleware(h.logger)) // Replace default recoverer with JSON version
+	r.Use(recoverMiddleware(h.logger))
 	r.Use(logMiddleware(h.logger))
 
-	// Create rate limit middleware groups
-	rateLimits := ratelimit.NewCommonRateLimits(h.rateLimit, h.logger)
+	// Setup rate limiters
+	limits, err := h.newCommonRateLimits()
+	if err != nil {
+		panic(err) // Rate limits are required for operation
+	}
 
-	// API Routes v1alpha1
-	r.Route("/api/v1alpha1/displays", func(r chi.Router) {
-		// Public endpoints with rate limits
-		r.Group(func(r chi.Router) {
-			// Initial display registration endpoint
-			r.With(rateLimits.APIRequestLimiter()).Post("/", h.RegisterDisplay)
+	// Public routes
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.Timeout(10 * time.Second))
 
-			// Device activation endpoints
-			r.Group(func(r chi.Router) {
-				r.Use(rateLimits.DeviceCodeLimiter())
-				r.Post("/device/code", h.RequestDeviceCode)
-				r.Post("/activate", h.ActivateDeviceCode)
-			})
+		// Health check endpoints
+		r.Get("/healthz", h.handleHealth())
+		r.Get("/readyz", h.handleReady())
 
-			// Token management
-			r.Group(func(r chi.Router) {
-				r.Use(rateLimits.TokenRefreshLimiter())
-				r.Post("/token/refresh", h.RefreshToken)
-			})
-		})
+		// Device activation flow
+		r.With(limits.DeviceCodeLimiter.Middleware).Post("/device/code", h.RequestDeviceCode)
+		r.With(limits.DeviceCodeLimiter.Middleware).Post("/activate", h.ActivateDeviceCode)
+	})
 
-		// Protected display management routes requiring authentication
-		r.Group(func(r chi.Router) {
-			// Order: Auth -> Rate Limit -> Routes
-			r.Use(authMiddleware(h.auth, h.logger))
-			r.Use(rateLimits.APIRequestLimiter())
+	// Protected routes requiring authentication
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.Timeout(30 * time.Second))
+		r.Use(authMiddleware(h.auth, h.logger))
+		r.Use(limits.APIRequestLimiter.Middleware)
 
-			r.Route("/{id}", func(r chi.Router) {
-				r.Get("/", h.GetDisplay)
-				r.Put("/activate", h.ActivateDisplay)
-				r.Put("/last-seen", h.UpdateLastSeen)
-			})
+		// Display management
+		r.Get("/{displayID}", h.GetDisplay)
+		r.Put("/{displayID}/activate", h.ActivateDisplay)
+		r.Put("/{displayID}/last-seen", h.UpdateLastSeen)
 
-			// WebSocket endpoint with its own rate limit
-			r.With(rateLimits.WebSocketLimiter()).Get("/ws", h.ServeWs)
-		})
+		// Content event reporting
+		r.With(limits.ContentEventLimiter.Middleware).Post("/events", h.HandleContentEvents)
 
-		// Health check endpoints bypass rate limits
-		r.Group(func(r chi.Router) {
-			r.Get("/healthz", h.healthCheck)
-			r.Get("/readyz", h.readyCheck)
-		})
+		// WebSocket endpoint for display control
+		r.Get("/ws", h.ServeWebSocket)
 	})
 
 	return r
 }
 
-// writeJSON writes a JSON response, handling encoding errors
-func writeJSON(w http.ResponseWriter, status int, v interface{}, logger *slog.Logger) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(v); err != nil {
-		logger.Error("failed to encode JSON response",
-			"error", err,
-		)
-		// Don't try to write the error since we already wrote headers
+// handleHealth returns basic health check status
+func (h *Handler) handleHealth() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"status":"ok"}`))
 	}
 }
 
-// healthCheck implements a basic health check
-func (h *Handler) healthCheck(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{
-		"status": "ok",
-	}, h.logger)
-}
-
-// readyCheck implements a readiness check
-func (h *Handler) readyCheck(w http.ResponseWriter, r *http.Request) {
-	// Check dependencies
-	status := http.StatusOK
-	result := map[string]string{
-		"status": "ok",
+// handleReady checks if the server is ready to accept requests
+func (h *Handler) handleReady() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"status":"ok"}`))
 	}
-
-	writeJSON(w, status, result, h.logger)
 }

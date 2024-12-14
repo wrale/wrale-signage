@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"runtime/debug"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"log/slog"
 
+	"github.com/wrale/wrale-signage/internal/wsignd/auth"
 	werrors "github.com/wrale/wrale-signage/internal/wsignd/errors"
 )
 
@@ -108,7 +110,7 @@ func recoverMiddleware(logger *slog.Logger) func(next http.Handler) http.Handler
 }
 
 // authMiddleware validates bearer tokens and adds display ID to context
-func authMiddleware(logger *slog.Logger) func(next http.Handler) http.Handler {
+func authMiddleware(authService auth.Service, logger *slog.Logger) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Extract token from Authorization header
@@ -127,8 +129,24 @@ func authMiddleware(logger *slog.Logger) func(next http.Handler) http.Handler {
 				return
 			}
 
+			// Validate token with auth service
+			displayID, err := authService.ValidateAccessToken(r.Context(), parts[1])
+			if err != nil {
+				if err == auth.ErrTokenExpired {
+					writeJSONError(w, werrors.NewError("UNAUTHORIZED", "token expired", "auth", err), http.StatusUnauthorized)
+				} else {
+					writeJSONError(w, werrors.NewError("UNAUTHORIZED", "invalid token", "auth", err), http.StatusUnauthorized)
+				}
+				logger.Error("auth failed",
+					"error", err,
+					"path", r.URL.Path,
+					"remoteIP", r.RemoteAddr,
+				)
+				return
+			}
+
 			// Add display ID to context
-			ctx := context.WithValue(r.Context(), displayIDKey, uuid.New()) // TODO: Use real auth service
+			ctx := context.WithValue(r.Context(), displayIDKey, displayID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
