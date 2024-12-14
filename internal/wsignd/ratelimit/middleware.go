@@ -2,24 +2,64 @@ package ratelimit
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/binary"
 	"fmt"
 	"log/slog"
-	"math/rand"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5/middleware"
 )
 
+// secureRandomFloat64 generates a secure random float64 in [0.0, 1.0)
+// using crypto/rand. It maintains a buffer to improve performance.
+var secureRandomFloat64 = newSecureRandom()
+
+type secureRandom struct {
+	mu     sync.Mutex
+	buffer []byte
+	offset int
+}
+
+func newSecureRandom() *secureRandom {
+	return &secureRandom{
+		buffer: make([]byte, 1024), // Buffer 128 uint64 values
+		offset: 1024,               // Force initial refill
+	}
+}
+
+func (sr *secureRandom) Float64() float64 {
+	sr.mu.Lock()
+	defer sr.mu.Unlock()
+
+	// Check if we need to refill the buffer
+	if sr.offset+8 > len(sr.buffer) {
+		_, err := rand.Read(sr.buffer)
+		if err != nil {
+			// On crypto/rand failure, return 0.5 (midpoint)
+			// This provides no jitter but maintains safety
+			return 0.5
+		}
+		sr.offset = 0
+	}
+
+	// Read 8 bytes for a uint64
+	val := binary.BigEndian.Uint64(sr.buffer[sr.offset:])
+	sr.offset += 8
+
+	// Convert to float64 in [0, 1)
+	// Use the same technique as math/rand
+	return float64(val>>11) / (1 << 53)
+}
+
 // Middleware creates an HTTP middleware for rate limiting.
 // It enforces rate limits while providing standard rate limit headers
 // and proper error responses following RFC 6585 and RFC 7231.
 func Middleware(service Service, logger *slog.Logger, options RateLimitOptions) func(http.Handler) http.Handler {
-	// Initialize a secure random source for jitter calculations
-	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
-
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Extract request context for logging
@@ -54,7 +94,7 @@ func Middleware(service Service, logger *slog.Logger, options RateLimitOptions) 
 			if status.Remaining <= 0 {
 				// If waiting is enabled and we have a timeout, attempt to wait
 				if shouldWait(options, status.Limit) {
-					if err := waitForCapacity(r.Context(), service, key, options, reqLogger, rnd); err != nil {
+					if err := waitForCapacity(r.Context(), service, key, options, reqLogger); err != nil {
 						handleLimitExceeded(w, r, status, reqLogger)
 						return
 					}
@@ -148,7 +188,7 @@ func shouldWait(options RateLimitOptions, limit Limit) bool {
 
 // waitForCapacity attempts to wait for rate limit capacity to become available.
 // It uses exponential backoff with jitter to prevent thundering herd problems.
-func waitForCapacity(ctx context.Context, service Service, key LimitKey, options RateLimitOptions, logger *slog.Logger, rnd *rand.Rand) error {
+func waitForCapacity(ctx context.Context, service Service, key LimitKey, options RateLimitOptions, logger *slog.Logger) error {
 	timeout := options.WaitTimeout
 	if timeout == 0 {
 		timeout = service.GetLimit(key.Type).WaitTimeout
@@ -175,7 +215,7 @@ func waitForCapacity(ctx context.Context, service Service, key LimitKey, options
 		}
 
 		// Add jitter to prevent thundering herd
-		jitter := time.Duration(float64(backoff) * (0.5 + rnd.Float64())) // ±50% jitter
+		jitter := time.Duration(float64(backoff) * (0.5 + secureRandomFloat64.Float64())) // ±50% jitter
 		time.Sleep(jitter)
 
 		// Exponential backoff
