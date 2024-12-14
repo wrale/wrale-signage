@@ -39,52 +39,6 @@ func NewHandler(
 	}
 }
 
-// Rate limit configurations
-type CommonRateLimits struct {
-	APIRequestLimiter   ratelimit.Limiter
-	DeviceCodeLimiter   ratelimit.Limiter
-	ContentEventLimiter ratelimit.Limiter
-}
-
-// newCommonRateLimits creates standard rate limiters
-func (h *Handler) newCommonRateLimits() (*CommonRateLimits, error) {
-	// API requests: 100/minute with burst of 5
-	apiLimiter, err := h.ratelimit.GetLimit("api_request", &ratelimit.Config{
-		Rate:  100,
-		Burst: 5,
-		TTL:   time.Minute,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	// Device activation: 5/minute
-	deviceLimiter, err := h.ratelimit.GetLimit("device_activation", &ratelimit.Config{
-		Rate:  5,
-		Burst: 1,
-		TTL:   time.Minute,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	// Content events: 1000/minute with burst of 100
-	contentLimiter, err := h.ratelimit.GetLimit("content_events", &ratelimit.Config{
-		Rate:  1000,
-		Burst: 100,
-		TTL:   time.Minute,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return &CommonRateLimits{
-		APIRequestLimiter:   apiLimiter,
-		DeviceCodeLimiter:   deviceLimiter,
-		ContentEventLimiter: contentLimiter,
-	}, nil
-}
-
 // Router returns the HTTP router for display endpoints
 func (h *Handler) Router() http.Handler {
 	r := chi.NewRouter()
@@ -96,41 +50,41 @@ func (h *Handler) Router() http.Handler {
 	r.Use(recoverMiddleware(h.logger))
 	r.Use(logMiddleware(h.logger))
 
-	// Setup rate limiters
-	limits, err := h.newCommonRateLimits()
-	if err != nil {
-		panic(err) // Rate limits are required for operation
-	}
+	// Initialize common rate limiters
+	rateLimits := ratelimit.NewCommonRateLimits(h.ratelimit, h.logger)
 
 	// Public routes
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.Timeout(10 * time.Second))
 
-		// Health check endpoints
+		// Health check endpoints (no rate limiting)
 		r.Get("/healthz", h.handleHealth())
 		r.Get("/readyz", h.handleReady())
 
-		// Device activation flow
-		r.With(limits.DeviceCodeLimiter.Middleware).Post("/device/code", h.RequestDeviceCode)
-		r.With(limits.DeviceCodeLimiter.Middleware).Post("/activate", h.ActivateDeviceCode)
+		// Device activation flow (with device code rate limiting)
+		deviceCodeGroup := chi.NewRouter()
+		deviceCodeGroup.Use(rateLimits.DeviceCodeLimiter())
+		deviceCodeGroup.Post("/device/code", h.RequestDeviceCode)
+		deviceCodeGroup.Post("/activate", h.ActivateDeviceCode)
+		r.Mount("/", deviceCodeGroup)
 	})
 
 	// Protected routes requiring authentication
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.Timeout(30 * time.Second))
 		r.Use(authMiddleware(h.auth, h.logger))
-		r.Use(limits.APIRequestLimiter.Middleware)
+		r.Use(rateLimits.APIRequestLimiter())
 
 		// Display management
 		r.Get("/{displayID}", h.GetDisplay)
 		r.Put("/{displayID}/activate", h.ActivateDisplay)
 		r.Put("/{displayID}/last-seen", h.UpdateLastSeen)
 
-		// Content event reporting
-		r.With(limits.ContentEventLimiter.Middleware).Post("/events", h.HandleContentEvents)
+		// Content event reporting (with specific rate limit)
+		r.With(rateLimits.APIRequestLimiter()).Post("/events", h.HandleContentEvents)
 
-		// WebSocket endpoint for display control
-		r.Get("/ws", h.ServeWebSocket)
+		// WebSocket endpoint (with WebSocket-specific rate limit)
+		r.With(rateLimits.WebSocketLimiter()).Get("/ws", h.ServeWebSocket)
 	})
 
 	return r
